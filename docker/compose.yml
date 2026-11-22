@@ -1,0 +1,139 @@
+# Ambiente local para testar o bot sem Vercel nem Supabase.
+#
+#   Testes de ponta a ponta (Telegram falso, nada sai da sua máquina, exceto se você ligar lojas reais):
+#     docker compose -f docker/compose.yml --profile mock up -d
+#     docker compose -f docker/compose.yml --profile e2e run --rm e2e
+#
+#   Bot de verdade (usa TELEGRAM_BOT_TOKEN do .env.local; as lojas são as reais):
+#     docker compose -f docker/compose.yml --profile real up -d
+#     docker compose -f docker/compose.yml logs -f poller app-real
+#
+#   Desligar e apagar o banco local:
+#     docker compose -f docker/compose.yml --profile mock --profile real down -v
+#
+# A chave abaixo é só do banco local (assinada com um segredo de teste). Não serve para nada fora daqui.
+name: promo-bot
+
+x-dev-key: &dev_key eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoicHJvbW8tYm90LWRldiIsImlhdCI6MTcwMDAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwfQ.tZt_vYH8HX86f-9dm9MS5Ja9BoMfpB_Iwj5ziafXnSI
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./init/00-roles.sql:/docker-entrypoint-initdb.d/00-roles.sql:ro
+      - ../supabase/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../supabase/migrations/002_fontes_categorias_frete.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
+      - ./init/03-grants.sql:/docker-entrypoint-initdb.d/03-grants.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  rest:
+    image: postgrest/postgrest:v12.2.3
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: postgres://authenticator:authpass@db:5432/postgres
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: promo-bot-dev-jwt-secret-only-for-local-docker
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on: [rest]
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - '54321:8000'
+
+  mocks:
+    image: node:22-bookworm-slim
+    command: node /docker/mocks.mjs
+    volumes:
+      - ./:/docker:ro
+    ports:
+      - '4000:4000'
+
+  # App com Telegram falso (testes automáticos).
+  app:
+    profiles: [mock]
+    image: node:22-bookworm-slim
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund --loglevel=error && npx next dev -p 3000"
+    depends_on: [gateway, mocks]
+    volumes:
+      - ..:/app
+      - node_modules:/app/node_modules
+      - next_mock:/app/.next
+    environment:
+      SUPABASE_URL: http://gateway:8000
+      SUPABASE_SERVICE_ROLE_KEY: *dev_key
+      TELEGRAM_BOT_TOKEN: test-token
+      TELEGRAM_API_BASE: http://mocks:4000
+      TELEGRAM_WEBHOOK_SECRET: e2e-webhook-secret
+      TELEGRAM_ALLOWED_CHAT_ID: '4242'
+      CRON_SECRET: e2e-cron-secret
+      PROMO_DEV_HTTP_HOSTS: mocks
+      NEXT_TELEMETRY_DISABLED: '1'
+    ports:
+      - '3000:3000'
+
+  # App com o bot real (token do .env.local) e as lojas reais.
+  app-real:
+    profiles: [real]
+    image: node:22-bookworm-slim
+    working_dir: /app
+    command: sh -c "npm install --no-audit --no-fund --loglevel=error && npx next dev -p 3000"
+    depends_on: [gateway]
+    env_file: ../.env.local
+    volumes:
+      - ..:/app
+      - node_modules:/app/node_modules
+      - next_real:/app/.next
+    environment:
+      SUPABASE_URL: http://gateway:8000
+      SUPABASE_SERVICE_ROLE_KEY: *dev_key
+      NEXT_TELEMETRY_DISABLED: '1'
+    ports:
+      - '3000:3000'
+
+  poller:
+    profiles: [real]
+    image: node:22-bookworm-slim
+    command: node /docker/poller.mjs
+    depends_on: [app-real]
+    env_file: ../.env.local
+    environment:
+      APP_URL: http://app-real:3000
+    volumes:
+      - ./:/docker:ro
+
+  # Roda os testes de ponta a ponta contra o "app" (perfil mock).
+  e2e:
+    profiles: [e2e]
+    image: node:22-bookworm-slim
+    working_dir: /app
+    command: node --experimental-strip-types --no-warnings --test test/e2e/*.test.ts
+    volumes:
+      - ..:/app
+      - node_modules:/app/node_modules
+    environment:
+      APP_URL: http://app:3000
+      MOCKS_URL: http://mocks:4000
+      REST_URL: http://gateway:8000/rest/v1
+      REST_KEY: *dev_key
+      TELEGRAM_WEBHOOK_SECRET: e2e-webhook-secret
+      CRON_SECRET: e2e-cron-secret
+      CHAT_ID: '4242'
+
+volumes:
+  pgdata:
+  node_modules:
+  next_mock:
+  next_real:
