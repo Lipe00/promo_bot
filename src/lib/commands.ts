@@ -50,12 +50,7 @@ const STORE_ALIASES: Record<string, BuiltinStoreId> = {
   shopee: 'shopee',
   aliexpress: 'aliexpress',
   ali: 'aliexpress',
-  magalu: 'magalu',
-  magazineluiza: 'magalu',
   kabum: 'kabum',
-  pichau: 'pichau',
-  terabyte: 'terabyte',
-  terabyteshop: 'terabyte',
 };
 
 /** "Mercado Livre", "ml", "KaBuM!" → id da loja embutida. */
@@ -64,7 +59,7 @@ export function resolveStore(input: string): BuiltinStoreId | null {
   return STORE_ALIASES[key] ?? null;
 }
 
-/** "kabum, pichau" → ['kabum','pichau']; "todas" → null. */
+/** "kabum, amazon" → ['kabum','amazon']; "todas" → null. */
 export function parseStoreList(input: string | undefined): { ok: true; stores: string[] | null } | { ok: false; error: string } {
   const s = (input ?? '').trim();
   if (!s || /^(todas|todos|all|\*)$/i.test(s)) return { ok: true, stores: null };

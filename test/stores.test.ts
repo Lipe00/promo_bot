@@ -29,21 +29,15 @@ function envServing(html: string, finalUrl?: string): { env: AdapterEnv; request
   };
 }
 
-test('as 8 lojas pedidas estão registradas', () => {
-  assert.deepEqual(
-    STORE_ADAPTERS.map((a) => a.id).sort(),
-    ['aliexpress', 'amazon', 'kabum', 'magalu', 'mercadolivre', 'pichau', 'shopee', 'terabyte'],
-  );
+test('as 5 lojas embutidas estão registradas (Magalu, Pichau e Terabyte saíram: bloqueiam robôs)', () => {
+  assert.deepEqual(STORE_ADAPTERS.map((a) => a.id).sort(), ['aliexpress', 'amazon', 'kabum', 'mercadolivre', 'shopee']);
 });
 
 test('URLs de busca de cada loja', async () => {
   const expected: [string, string][] = [
     ['mercadolivre', 'https://lista.mercadolivre.com.br/force-one-kabuto'],
     ['amazon', 'https://www.amazon.com.br/s?k=force+one+kabuto'],
-    ['magalu', 'https://www.magazineluiza.com.br/busca/force%20one%20kabuto/'],
     ['kabum', 'https://www.kabum.com.br/busca/force-one-kabuto'],
-    ['pichau', 'https://www.pichau.com.br/search?q=force%20one%20kabuto'],
-    ['terabyte', 'https://www.terabyteshop.com.br/busca?str=force%20one%20kabuto'],
     ['aliexpress', 'https://pt.aliexpress.com/w/wholesale-force-one-kabuto.html'],
   ];
   for (const [id, url] of expected) {
@@ -82,7 +76,7 @@ test('KaBuM: link de categoria usa o mesmo leitor e recusa link de outra loja', 
   const kabum = adapterOf('kabum');
   const ok = await kabum.listing!('https://www.kabum.com.br/hardware/placa-de-video-vga', envServing(fixture('kabum-busca.html')).env);
   assert.equal(ok.status, 'ok');
-  const bad = await kabum.listing!('https://www.pichau.com.br/hardware', envServing('<html></html>').env);
+  const bad = await kabum.listing!('https://www.amazon.com.br/b?node=1', envServing('<html></html>').env);
   assert.equal(bad.status, 'error');
 });
 
@@ -125,11 +119,11 @@ test('JSON-LD funciona em qualquer loja, com prazo da promoção', async () => {
   const ld = {
     '@type': 'ItemList',
     itemListElement: [
-      { '@type': 'ListItem', item: { '@type': 'Product', name: 'Headset Force One Kabuto', url: 'https://www.terabyteshop.com.br/produto/27569/headset', offers: { price: '489.90', priceValidUntil: '2026-11-27' } } },
+      { '@type': 'ListItem', item: { '@type': 'Product', name: 'Headset Force One Kabuto', url: 'https://www.amazon.com.br/dp/B0TESTE', offers: { price: '489.90', priceValidUntil: '2026-11-27' } } },
     ],
   };
   const html = `<html><script type="application/ld+json">${JSON.stringify(ld)}</script></html>`;
-  const res = await adapterOf('terabyte').search('force one kabuto', envServing(html).env);
+  const res = await adapterOf('amazon').search('force one kabuto', envServing(html).env);
   assert.equal(res.status, 'ok');
   assert.equal(res.offers[0]?.price, 489.9);
   assert.equal(res.offers[0]?.endsAt, '2026-11-28T02:59:59.000Z');
@@ -155,7 +149,7 @@ test('página sem produtos vira "empty"; bloqueio e robots passam adiante; redir
   });
   assert.equal(blocked.status, 'blocked');
 
-  const robots = await adapterOf('pichau').search('x', {
+  const robots = await adapterOf('kabum').search('x', {
     fetchHtml: async () => ({ kind: 'robots', message: 'o robots.txt da loja proíbe robôs nesta página' }),
   });
   assert.equal(robots.status, 'robots');

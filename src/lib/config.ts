@@ -6,10 +6,7 @@ export const STORE_META: Record<BuiltinStoreId, { name: string; domains: string[
   amazon: { name: 'Amazon', domains: ['amazon.com.br'] },
   shopee: { name: 'Shopee', domains: ['shopee.com.br'] },
   aliexpress: { name: 'AliExpress', domains: ['aliexpress.com'] },
-  magalu: { name: 'Magalu', domains: ['magazineluiza.com.br'] },
   kabum: { name: 'KaBuM!', domains: ['kabum.com.br'] },
-  pichau: { name: 'Pichau', domains: ['pichau.com.br'] },
-  terabyte: { name: 'TerabyteShop', domains: ['terabyteshop.com.br'] },
 };
 
 export const BUILTIN_IDS = Object.keys(STORE_META) as BuiltinStoreId[];

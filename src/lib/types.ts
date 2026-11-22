@@ -4,10 +4,7 @@ export type BuiltinStoreId =
   | 'amazon'
   | 'shopee'
   | 'aliexpress'
-  | 'magalu'
-  | 'kabum'
-  | 'pichau'
-  | 'terabyte';
+  | 'kabum';
 
 export type StoreId = string;
 

@@ -63,6 +63,30 @@ test('com chaves: POST na API com cabeçalho de autorização', async () => {
   assert.match(c.init?.headers?.authorization ?? '', /^SHA256 Credential=123, Timestamp=\d+, Signature=[0-9a-f]{64}$/);
 });
 
+test('conta sem acesso à Open API (resposta real, erro 10035) vira "bloqueou" com instrução', async () => {
+  // Resposta capturada em 22/11/2026 chamando a API com assinatura válida e conta sem acesso.
+  const real = {
+    errors: [
+      {
+        message:
+          'error [10035]: You currently do not have access to the Shopee Affiliate Open API Platform. Please check the error code description on the front-end page and contact the Shopee Affiliate team',
+        extensions: {
+          code: 10035,
+          message:
+            'You currently do not have access to the Shopee Affiliate Open API Platform. Please check the error code description on the front-end page and contact the Shopee Affiliate team',
+        },
+      },
+    ],
+  };
+  const res = await shopee.search('ssd', {
+    secrets: { SHOPEE_AFFILIATE_APP_ID: '1', SHOPEE_AFFILIATE_SECRET: '2' },
+    fetchHtml: async (url) => ({ kind: 'ok', html: JSON.stringify(real), finalUrl: url, status: 200 }),
+  });
+  assert.equal(res.status, 'blocked');
+  assert.match(res.message, /não tem acesso à Open API \(erro 10035\)/);
+  assert.match(res.message, /affiliate\.shopee\.com\.br/);
+});
+
 test('erro da API vira status de erro com a mensagem', async () => {
   const res = await shopee.search('x', {
     secrets: { SHOPEE_AFFILIATE_APP_ID: '1', SHOPEE_AFFILIATE_SECRET: '2' },

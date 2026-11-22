@@ -69,25 +69,69 @@ test('busca com token client_credentials; token fica em cache', async () => {
   assert.equal(calls.filter((c) => c.url.includes('/oauth/token')).length, 1);
 });
 
-test('API recusando (403) vira "bloqueou" com dica, sem quebrar', async () => {
+test('busca recusada (403): cai na busca de catálogo e pega o anúncio mais barato de cada produto', async () => {
+  const { env, calls } = apiEnv({
+    '/oauth/token': { body: { access_token: 'T', expires_in: 100 } },
+    '/sites/MLB/search': { status: 403, body: { message: 'forbidden' } },
+    '/products/search': {
+      body: {
+        results: [
+          { id: 'MLB111', name: 'Headset Force One Kabuto', status: 'active' },
+          { id: 'MLB222', name: 'Inativo', status: 'inactive' },
+        ],
+      },
+    },
+    '/products/MLB111/items': {
+      body: {
+        results: [
+          { item_id: 'MLB9001', price: 299.9, currency_id: 'BRL', shipping: { free_shipping: false } },
+          { item_id: 'MLB9002', price: 279.9, original_price: 349.9, currency_id: 'BRL', shipping: { free_shipping: true } },
+        ],
+      },
+    },
+  });
+  const r = await mercadolivre.search('force one kabuto', env);
+  assert.equal(r.status, 'ok');
+  assert.match(r.message, /catálogo/);
+  assert.deepEqual(r.offers, [
+    {
+      title: 'Headset Force One Kabuto',
+      url: 'https://www.mercadolivre.com.br/p/MLB111',
+      price: 279.9,
+      regularPrice: 349.9,
+      itemId: 'MLB9002',
+      freightNote: 'frete grátis informado pelo Mercado Livre',
+    },
+  ]);
+  assert.ok(!calls.some((c) => c.url.includes('/products/MLB222/')), 'produto inativo não gasta requisição');
+  assert.ok(calls.filter((c) => c.url.includes('/products/')).every((c) => c.init?.headers?.authorization === 'Bearer T'));
+});
+
+test('busca e catálogo recusados (403): "bloqueou" com dica, sem quebrar', async () => {
   const { env } = apiEnv({
     '/oauth/token': { body: { access_token: 'T', expires_in: 100 } },
     '/sites/MLB/search': { status: 403, body: { message: 'forbidden' } },
+    '/products/search': { status: 403, body: { code: 'PA_UNAUTHORIZED_RESULT_FROM_POLICIES' } },
     'lista.mercadolivre': { body: '' },
   });
   const r = await mercadolivre.search('x', env);
   assert.equal(r.status, 'blocked');
+  assert.match(r.message, /catálogo/);
   assert.match(r.message, /developers\.mercadolivre/);
 });
 
-test('credencial errada: mensagem clara', async () => {
+test('credencial errada (resposta real do ML): mensagem clara', async () => {
   const { env } = apiEnv({
-    '/oauth/token': { status: 400, body: { message: 'invalid client_id or client_secret' } },
+    // Resposta real de /oauth/token com client_id/secret inválidos (22/11/2026).
+    '/oauth/token': {
+      status: 400,
+      body: { message: 'invalid client_id or client_secret', error: 'invalid_client', status: 400, cause: [] },
+    },
     'lista.mercadolivre': { body: '<html>nada</html>' },
   });
   const r = await mercadolivre.search('x', env);
   assert.equal(r.status, 'error');
-  assert.match(r.message, /invalid client_id/);
+  assert.match(r.message, /ML_CLIENT_ID ou ML_CLIENT_SECRET inválidos/);
 });
 
 test('frete por CEP e fim da promoção pelo enrich', async () => {

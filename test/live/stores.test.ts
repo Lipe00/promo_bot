@@ -32,9 +32,6 @@ const ACCEPTED_WITHOUT_KEYS: Record<string, StoreResult['status'][]> = {
   aliexpress: ['ok'], // página de busca com JSON embutido
   kabum: ['ok'],
   amazon: ['ok', 'blocked'], // costuma bloquear IP de datacenter
-  magalu: ['ok', 'blocked'],
-  pichau: ['ok', 'blocked', 'robots'], // robots.txt proíbe /search; categorias passam pelo Cloudflare
-  terabyte: ['ok', 'blocked'], // Cloudflare
 };
 
 const report: string[] = [];
@@ -52,7 +49,7 @@ function show(id: string, name: string, res: StoreResult, ms: number) {
   void id;
 }
 
-for (const id of ['mercadolivre', 'shopee', 'aliexpress', 'kabum', 'amazon', 'magalu', 'pichau', 'terabyte']) {
+for (const id of ['mercadolivre', 'shopee', 'aliexpress', 'kabum', 'amazon']) {
   test(`ao vivo: ${id} com "${TERM}"`, { timeout: 60_000 }, async () => {
     const adapter = STORE_ADAPTERS.find((a) => a.id === id)!;
     const t0 = Date.now();

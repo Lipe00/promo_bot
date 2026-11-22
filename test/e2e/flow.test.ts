@@ -102,7 +102,7 @@ test('fluxo completo pelo Telegram', { timeout: 300_000 }, async () => {
   assert.equal((await texts()).length, count);
 
   // Desliga as lojas reais: o teste usa só a loja falsa.
-  for (const id of ['mercadolivre', 'amazon', 'shopee', 'aliexpress', 'magalu', 'kabum', 'pichau', 'terabyte']) {
+  for (const id of ['mercadolivre', 'amazon', 'shopee', 'aliexpress', 'kabum']) {
     assert.match(await say(`/lojas off ${id}`), /Desligada/);
   }
 

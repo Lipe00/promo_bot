@@ -3,19 +3,13 @@ import { aliexpress } from './aliexpress.ts';
 import { amazon } from './amazon.ts';
 import { makeGenericStore } from './generic.ts';
 import { kabum } from './kabum.ts';
-import { magalu } from './magalu.ts';
 import { mercadolivre } from './mercadolivre.ts';
-import { pichau } from './pichau.ts';
 import { shopee } from './shopee.ts';
-import { terabyte } from './terabyte.ts';
 
 export const STORE_ADAPTERS: StoreAdapter[] = [
   mercadolivre,
   amazon,
-  magalu,
   kabum,
-  pichau,
-  terabyte,
   shopee,
   aliexpress,
 ];

@@ -17,13 +17,14 @@ Resultado de `npm run test:live` rodando de um IP residencial no Brasil:
 | **KaBuM!** | ✅ funciona | — | Lê cartão, Pix, **oferta relâmpago com horário de fim**, frete grátis. Links de categoria funcionam. |
 | **Amazon** | ✅ funciona (IP residencial) | — | IP de datacenter (Vercel) costuma levar captcha; aí o `/status` mostra ⛔. |
 | **AliExpress** | ✅ funciona | ✅ link de afiliado | O preço da busca é o da **variação mais barata** do anúncio; o alerta avisa "a partir de". |
-| **Mercado Livre** | ⛔ bloqueia ("tráfego suspeito") | ✅ API oficial | Com a chave: busca, **frete pelo CEP** e fim da promoção. **Recomendo criar a chave.** |
-| **Shopee** | ➖ não dá | ✅ API de afiliados | O site é montado por JavaScript e a API interna recusa robôs. |
-| Magalu | ⛔ HTTP 403 | — | Bloqueia até o robots.txt. |
-| Pichau | 🚫 robots.txt proíbe a busca | — | Páginas de categoria passam pelo Cloudflare (bloqueio). |
-| TerabyteShop | ⛔ Cloudflare | — | |
+| **Mercado Livre** | ⛔ bloqueia ("tráfego suspeito") | ✅ API oficial | Com a chave: busca, **frete pelo CEP** e fim da promoção. Se a busca principal da API for recusada, usa a busca de catálogo (`/products/search`). **Recomendo criar a chave.** |
+| **Shopee** | ➖ não dá | ✅ API de afiliados | O site é montado por JavaScript e a API interna recusa robôs. Conta sem acesso aparece como "erro 10035" no `/status`. |
+
+Magalu, Pichau e TerabyteShop foram removidas: bloqueiam robôs (403, robots.txt e Cloudflare). Se quiser tentar alguma loja assim, cadastre com `/fonte add`.
 
 O bot **não contorna** bloqueio, captcha nem robots.txt. Quando uma loja bloqueia, ele registra e segue com as outras. A saída para ML e Shopee é a API oficial.
+
+> As chaves de ML e Shopee ainda não foram testadas ao vivo (aguardando as credenciais). O código foi testado com respostas no formato da documentação e com respostas reais de erro das duas APIs.
 
 ## Chaves de API (opcionais, mas o Mercado Livre quase exige)
 
@@ -123,7 +124,7 @@ docker compose -f docker/compose.yml --profile mock up -d
 docker compose -f docker/compose.yml --profile e2e run --rm e2e
 ```
 
-- `npm test`: 114 testes de unidade (lógica, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
+- `npm test`: 116 testes de unidade (lógica, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
 - E2E (`test/e2e/`): sobe Postgres + PostgREST (imitando o Supabase), um Telegram falso e uma loja falsa; manda comandos pelo webhook e confere banco e mensagens.
 - `npm run test:live`: busca **real** em todas as lojas e imprime o que achou. Use `LIVE_TERM="rtx 4060"` para trocar o termo.
 

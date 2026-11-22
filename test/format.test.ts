@@ -63,9 +63,12 @@ test('status e quebra de mensagens longas', () => {
   assert.match(buildStatusMessage([]), /Ainda não rodei/);
   const msg = buildStatusMessage([
     { store: 'kabum', status: 'blocked', message: 'HTTP 403', items_found: 0, checked_at: '2026-11-22T12:00:00Z' },
+    // loja que saiu do bot: a linha antiga no banco não aparece
+    { store: 'magalu', status: 'blocked', message: 'HTTP 403', items_found: 0, checked_at: '2026-11-22T12:00:00Z' },
   ]);
   assert.match(msg, /⛔ <b>KaBuM!<\/b>: HTTP 403/);
-  assert.match(msg, /Pichau: sem dados/);
+  assert.match(msg, /Amazon: sem dados/);
+  assert.doesNotMatch(msg, /magalu/i);
 
   const long = Array.from({ length: 300 }, (_, i) => `linha ${i} ${'x'.repeat(30)}`).join('\n');
   const chunks = splitMessage(long, 1000);

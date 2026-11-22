@@ -40,7 +40,9 @@ let cached: Runtime | null = null;
 /** Monta banco, Telegram e lojas uma vez por instância da função. */
 export function getRuntime(): Runtime {
   if (cached) return cached;
-  const db = createDb(requireEnv('SUPABASE_URL'), requireEnv('SUPABASE_SERVICE_ROLE_KEY'));
+  // Aceita a URL copiada com "/rest/v1/" no fim (o supabase-js quer só a base).
+  const supabaseUrl = requireEnv('SUPABASE_URL').trim().replace(/\/rest\/v1\/?$/, '').replace(/\/+$/, '');
+  const db = createDb(supabaseUrl, requireEnv('SUPABASE_SERVICE_ROLE_KEY'));
   const token = requireEnv('TELEGRAM_BOT_TOKEN');
   const budget = Number(process.env.CHECK_BUDGET_MS);
   cached = {

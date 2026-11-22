@@ -38,7 +38,12 @@ async function getToken(env: AdapterEnv, id: string, secret: string): Promise<{ 
   if (out.kind !== 'ok') return { error: out.message };
   const body = asRecord(parseJson(out.html));
   const token = typeof body?.access_token === 'string' ? body.access_token : null;
-  if (!token) return { error: `token recusado: ${String(body?.message ?? body?.error ?? out.status)}` };
+  if (!token) {
+    if (body?.error === 'invalid_client') {
+      return { error: 'ML_CLIENT_ID ou ML_CLIENT_SECRET inválidos (invalid client_id or client_secret); confira em developers.mercadolivre.com.br' };
+    }
+    return { error: `token recusado: ${String(body?.message ?? body?.error ?? out.status)}` };
+  }
   const ttl = typeof body?.expires_in === 'number' ? body.expires_in : 21600;
   cachedToken = { value: token, until: Date.now() + (ttl - 120) * 1000, key };
   return { token };
@@ -97,14 +102,85 @@ function keysFrom(env: AdapterEnv) {
   return s.ML_CLIENT_ID && s.ML_CLIENT_SECRET ? { id: s.ML_CLIENT_ID, secret: s.ML_CLIENT_SECRET } : null;
 }
 
+// ---------------------------------------------------------------------------
+// Busca de catálogo (reserva da API). Desde 2025 o ML recusa /sites/MLB/search para parte dos apps;
+// /products/search continua aberto com token. Cada produto de catálogo tem vários anúncios:
+// /products/{id}/items devolve os anúncios com preço, e fica o mais barato.
+// ---------------------------------------------------------------------------
+
+const CATALOG_LIMIT = 8;
+
+export function mlCatalogProducts(body: unknown): { id: string; name: string }[] {
+  const results = asRecord(body)?.results;
+  const out: { id: string; name: string }[] = [];
+  for (const raw of Array.isArray(results) ? results : []) {
+    const r = asRecord(raw);
+    if (!r || typeof r.id !== 'string' || typeof r.name !== 'string') continue;
+    if (r.status && r.status !== 'active') continue;
+    out.push({ id: r.id, name: r.name });
+  }
+  return out;
+}
+
+/** Anúncio mais barato (em BRL) de um produto de catálogo. */
+export function mlCheapestItem(
+  body: unknown,
+): { itemId: string | null; price: number; regularPrice: number | null; freeShipping: boolean } | null {
+  const results = asRecord(body)?.results;
+  let best: { itemId: string | null; price: number; regularPrice: number | null; freeShipping: boolean } | null = null;
+  for (const raw of Array.isArray(results) ? results : []) {
+    const r = asRecord(raw);
+    if (!r || (r.currency_id && r.currency_id !== 'BRL')) continue;
+    const price = firstPrice(r.price);
+    if (price === null || (best && best.price <= price)) continue;
+    best = {
+      itemId: typeof r.item_id === 'string' ? r.item_id : typeof r.id === 'string' ? r.id : null,
+      price,
+      regularPrice: firstPrice(r.original_price),
+      freeShipping: asRecord(r.shipping)?.free_shipping === true,
+    };
+  }
+  return best;
+}
+
+async function searchCatalog(terms: string, env: AdapterEnv, token: string): Promise<StoreResult> {
+  const headers = { authorization: `Bearer ${token}` };
+  const url = `${ML_API}/products/search?${new URLSearchParams({ status: 'active', site_id: 'MLB', q: terms }).toString()}`;
+  const out = await env.fetchHtml(url, { api: true, accept: 'json', headers });
+  if (out.kind !== 'ok') return { status: out.kind, message: out.message, offers: [] };
+  if ((out.status ?? 200) >= 400) {
+    return { status: 'blocked', message: `busca de catálogo recusada (HTTP ${out.status})`, offers: [] };
+  }
+  const products = mlCatalogProducts(parseJson(out.html)).slice(0, CATALOG_LIMIT);
+  const offers: RawOffer[] = [];
+  for (const p of products) {
+    const items = await env.fetchHtml(`${ML_API}/products/${encodeURIComponent(p.id)}/items`, { api: true, accept: 'json', headers });
+    if (items.kind !== 'ok' || (items.status ?? 200) >= 400) continue;
+    const best = mlCheapestItem(parseJson(items.html));
+    if (!best) continue;
+    offers.push({
+      title: p.name,
+      url: `https://www.mercadolivre.com.br/p/${p.id}`,
+      price: best.price,
+      regularPrice: best.regularPrice,
+      itemId: best.itemId,
+      freightNote: best.freeShipping ? 'frete grátis informado pelo Mercado Livre' : null,
+    });
+  }
+  if (offers.length === 0) return { status: 'empty', message: 'catálogo do ML sem resultados com preço', offers: [] };
+  return { status: 'ok', message: `${offers.length} itens (API, catálogo)`, offers };
+}
+
 async function searchApi(terms: string, env: AdapterEnv, token: string): Promise<StoreResult> {
   const url = `${ML_API}/sites/MLB/search?${new URLSearchParams({ q: terms, limit: '40' }).toString()}`;
   const out = await env.fetchHtml(url, { api: true, accept: 'json', headers: { authorization: `Bearer ${token}` } });
   if (out.kind !== 'ok') return { status: out.kind, message: out.message, offers: [] };
   if (out.status === 401 || out.status === 403) {
+    const catalog = await searchCatalog(terms, env, token);
+    if (catalog.status === 'ok' || catalog.status === 'empty') return catalog;
     return {
       status: 'blocked',
-      message: `a API do ML recusou a busca (HTTP ${out.status}); confira se o app está ativo em developers.mercadolivre.com.br`,
+      message: `a API do ML recusou a busca (HTTP ${out.status}) e a de catálogo (${catalog.message}); confira o app em developers.mercadolivre.com.br`,
       offers: [],
     };
   }

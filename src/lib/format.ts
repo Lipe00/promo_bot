@@ -157,7 +157,8 @@ export function statusIcon(kind: StoreStatusKind): string {
 export function buildStatusMessage(rows: StoreStatusRow[]): string {
   if (rows.length === 0) return 'Ainda não rodei nenhuma checagem. Use /checar.';
   const byStore = new Map(rows.map((r) => [r.store, r]));
-  const ids = [...BUILTIN_IDS, ...rows.map((r) => r.store).filter((id) => !isBuiltinId(id))];
+  // Lojas embutidas + fontes cadastradas. Linhas de lojas que saíram do bot (ex.: magalu) ficam de fora.
+  const ids = [...BUILTIN_IDS, ...rows.map((r) => r.store).filter((id) => id.startsWith('custom:'))];
   const lines = ['<b>Saúde das lojas (última checagem)</b>'];
   for (const id of ids) {
     const r = byStore.get(id);

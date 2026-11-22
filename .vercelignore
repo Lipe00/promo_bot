@@ -1,0 +1,10 @@
+# Nunca enviar segredos nem arquivos locais para a Vercel.
+.env
+.env.*
+!.env.example
+.calib
+node_modules
+.next
+docker
+test
+scripts

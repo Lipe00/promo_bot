@@ -185,7 +185,7 @@ test('cep, checar, testar e comandos desconhecidos', async () => {
 
   assert.match((await handleCommand('/xyz', ctx)).reply, /desconhecido/);
   assert.match((await handleCommand('oi', ctx)).reply, /\/ajuda/);
-  assert.match((await handleCommand('/lojas', ctx)).reply, /Pichau/);
+  assert.match((await handleCommand('/lojas', ctx)).reply, /KaBuM!/);
   assert.match((await handleCommand('/ajuda', ctx)).reply, /\/categoria/);
 });
 

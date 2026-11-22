@@ -34,12 +34,26 @@ export function shopeeQueryBody(terms: string): string {
   return JSON.stringify({ query, variables: { keyword: terms, limit: 30 } });
 }
 
-export function shopeeFromApi(body: unknown): { offers: RawOffer[]; error: string | null } {
+/**
+ * Erro 10035 (conferido em 22/11/2026): a assinatura foi aceita, mas a conta ainda não tem acesso
+ * à Open API. O acesso é pedido no portal de afiliados (affiliate.shopee.com.br → Open API).
+ */
+export const SHOPEE_NO_ACCESS = 10035;
+
+export function shopeeFromApi(body: unknown): { offers: RawOffer[]; error: string | null; code?: number } {
   const root = asRecord(body);
   const errors = Array.isArray(root?.errors) ? root.errors : [];
   if (errors.length > 0) {
     const first = asRecord(errors[0]);
-    return { offers: [], error: String(first?.message ?? 'erro da API') };
+    const code = Number(asRecord(first?.extensions)?.code);
+    if (code === SHOPEE_NO_ACCESS) {
+      return {
+        offers: [],
+        code,
+        error: 'sua conta ainda não tem acesso à Open API (erro 10035); peça em affiliate.shopee.com.br → Open API',
+      };
+    }
+    return { offers: [], error: String(first?.message ?? 'erro da API'), ...(Number.isFinite(code) ? { code } : {}) };
   }
   const nodes = asRecord(asRecord(root?.data)?.productOfferV2)?.nodes;
   const out: RawOffer[] = [];
@@ -93,8 +107,10 @@ export const shopee: StoreAdapter = {
       headers: { 'content-type': 'application/json', authorization: shopeeAuthHeader(keys.appId, keys.secret, body, ts) },
     });
     if (out.kind !== 'ok') return { status: out.kind, message: out.message, offers: [] };
-    const { offers, error } = shopeeFromApi(parseJson(out.html));
-    if (error) return { status: 'error', message: `API Shopee: ${error}`, offers: [] };
+    const { offers, error, code } = shopeeFromApi(parseJson(out.html));
+    if (error) {
+      return { status: code === SHOPEE_NO_ACCESS ? 'blocked' : 'error', message: `API Shopee: ${error}`, offers: [] };
+    }
     if (offers.length === 0) return { status: 'empty', message: 'API sem resultados', offers: [] };
     return { status: 'ok', message: `${offers.length} itens (API)`, offers };
   },
