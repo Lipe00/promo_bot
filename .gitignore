@@ -7,3 +7,5 @@ next-env.d.ts
 *.tsbuildinfo
 .vercel
 .calib
+.env*
+!.env.example
