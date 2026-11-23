@@ -65,3 +65,8 @@ export function priceCeiling(target: number, marginPct: number): number {
 export function effectivePrice(offer: { price: number; cashPrice?: number | null }): number {
   return offer.cashPrice && offer.cashPrice > 0 ? Math.min(offer.price, offer.cashPrice) : offer.price;
 }
+
+/** Promoção = a loja mostra preço "de" maior que o atual, ou informa até quando vai a oferta. */
+export function isDeal(offer: { price: number; regularPrice?: number | null; endsAt?: string | null }): boolean {
+  return (typeof offer.regularPrice === 'number' && offer.regularPrice > offer.price) || !!offer.endsAt;
+}

@@ -48,13 +48,13 @@ Cadastre na Vercel em **Settings → Environment Variables** (nunca pelo Telegra
 ### 2. Supabase
 1. Crie um projeto em supabase.com (região São Paulo).
 2. **SQL Editor → New query**: cole `supabase/schema.sql` e rode.
-   - **Já tinha rodado a versão antiga?** Rode `supabase/migrations/002_fontes_categorias_frete.sql` e depois `003_seguranca.sql` (os dois podem rodar mais de uma vez).
+   - **Já tinha rodado uma versão antiga?** Rode as migrações de `supabase/migrations/` que faltam, em ordem (002, 003, 004). Todas podem rodar mais de uma vez.
 3. **Project Settings → API Keys**: copie a **Project URL** e a **Secret key** (`sb_secret_...`, a substituta da antiga `service_role`; só no servidor). Não use a *publishable key*.
 
 ### 3. Vercel
 1. Suba esta pasta para um repositório **privado** no GitHub e importe na Vercel (**Add New → Project**).
 2. Em **Settings → Environment Variables**, cadastre (veja `.env.example`):
-   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `CRON_SECRET` e as chaves de API que tiver.
+   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `CRON_SECRET`, `PASSWORD_SALT`, `SESSION_SECRET` e as chaves de API que tiver (marque os segredos como *Sensitive*).
    Deixe `TELEGRAM_ALLOWED_CHAT_ID` **sem cadastrar** por enquanto.
 3. Faça o deploy. O `vercel.json` coloca a função em São Paulo (`gru1`), mais perto das lojas.
 
@@ -76,7 +76,31 @@ Por padrão roda **a cada 3 horas**. O cron grátis da Vercel só roda 1x por di
 
 Cada rodada trabalha no máximo ~45s (a função tem 60s). Se você tiver muitas buscas, as que não couberem entram primeiro na rodada seguinte; nenhuma fica para trás.
 
-## Uso
+## Painel web
+
+Abra `https://SEU-APP.vercel.app` e entre com o usuário do painel. Funciona no celular e no computador.
+
+- **Cards** com o menor preço encontrado de cada busca, a loja e o status (🔥 abaixo do alvo, 👀 na margem, acima do teto). O menor preço aparece mesmo quando está acima do teto: o bot guarda as 3 ofertas mais baratas de cada loja.
+- **Clique num card** para abrir o painel (gaveta no computador, tela cheia no celular; o "voltar" do celular fecha). Abas:
+  - **Ofertas**: preço, preço "de", frete, ⏰ fim da promoção e link para a loja.
+  - **Histórico**: gráfico do menor preço por dia (com alvo e teto) e a lista de mudanças. Um ponto é gravado quando o preço muda, ou uma vez por dia; o histórico guarda 180 dias.
+  - **Configurar**: alvo, margem, lojas, "apenas promoções", pausar e remover.
+- **+ Produto**: cadastra produto ou categoria, com as mesmas regras do `/add` e do `/categoria`.
+- **Apenas promoções**: só avisa ofertas com preço de/por (riscado maior que o atual) **ou** com prazo de fim. As outras continuam aparecendo no painel, só não geram alerta. No Telegram: `/promo id`.
+- O painel e o Telegram mostram as mesmas buscas (a conta do painel aponta para o seu chat do Telegram).
+
+### Contas e login
+- Senha guardada com **scrypt**, usando o `PASSWORD_SALT` do ambiente + o nome do usuário como salt. A senha nunca fica em arquivo.
+- Cada login cria uma **sessão** no banco (uma por aparelho, válida por 7 dias). **Sair** apaga a sessão daquele aparelho, então o cookie antigo deixa de valer mesmo se alguém o tiver copiado.
+- Para saber se o login está válido: `GET /api/ui/session` → `200 {"authenticated":true,"username":...,"expiresAt":...}` ou `401`.
+- Senha errada **não trava a conta**; só demora ~1s para responder (atrasa robôs).
+- Criar uma conta ou trocar a senha (trocar também encerra todas as sessões da conta). A senha vai só numa variável na hora de rodar:
+  ```powershell
+  docker run --rm -v "${PWD}:/app" -v promobot_nm:/app/node_modules -w /app --env-file .env.deploy.local -e NEW_USER_NAME=felipe -e NEW_USER_PASSWORD="SUA-SENHA" -e NEW_USER_CHAT_ID=SEU_CHAT_ID node:22-bookworm-slim node --experimental-strip-types --no-warnings scripts/create-user.ts
+  ```
+  A tabela `users` já aceita várias contas, cada uma ligada a um chat do Telegram.
+
+## Uso no Telegram
 
 | Comando | O que faz |
 |---|---|
@@ -88,6 +112,7 @@ Cada rodada trabalha no máximo ~45s (a função tem 60s). Se você tiver muitas
 | `/lista` | mostra as buscas |
 | `/preco 1 280` · `/margem 1 10` | muda alvo ou margem da busca #1 |
 | `/pausar 1` · `/ativar 1` · `/remover 1` | gerencia |
+| `/promo 1` | liga/desliga "apenas promoções" na busca #1 |
 | `/lojas` · `/lojas off amazon` · `/lojas on amazon` | lojas e como cada uma é lida; liga/desliga |
 | `/fonte add Nome \| https://loja.com.br/busca?q={q}` | cadastra loja nova (testa na hora) |
 | `/fonte remover 3` | remove a fonte #3 |
@@ -127,7 +152,7 @@ docker compose -f docker/compose.yml --profile mock up -d
 docker compose -f docker/compose.yml --profile e2e run --rm e2e
 ```
 
-- `npm test`: 116 testes de unidade (lógica, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
+- `npm test`: 134 testes de unidade (lógica, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
 - E2E (`test/e2e/`): sobe Postgres + PostgREST (imitando o Supabase), um Telegram falso e uma loja falsa; manda comandos pelo webhook e confere banco e mensagens.
 - `npm run test:live`: busca **real** em todas as lojas e imprime o que achou. Use `LIVE_TERM="rtx 4060"` para trocar o termo.
 
@@ -170,6 +195,11 @@ src/app/api/telegram/               webhook do Telegram (+ /setup)
 src/app/api/cron/check/             rotina de checagem
 src/lib/commands.ts                 comandos do Telegram
 src/lib/webhook.ts                  trata cada mensagem (dono, ações demoradas)
+src/lib/auth.ts · web-auth.ts       senha (scrypt + salt), sessões e proteção das rotas do painel
+src/lib/dashboard.ts                cards, detalhe e histórico do painel
+src/lib/watch-input.ts              regras de cadastro (Telegram e painel)
+src/app/page.tsx · login/ · _ui/    painel web
+src/app/api/ui/                     API do painel
 src/lib/checker.ts                  busca, margem, frete, categorias, orçamento de tempo, alertas
 src/lib/alerts.ts                   regra de quando avisar
 src/lib/matching.ts                 palavras da busca × título
@@ -183,6 +213,7 @@ test/                               unidade · e2e/ · live/ · fixtures/
 
 ## Segurança (auditado em 22/11/2026)
 
+- **Painel**: as rotas `/api/ui/*` exigem sessão válida (cookie `HttpOnly`, `Secure`, `SameSite=Lax`, assinado e conferido no banco) e recusam `Origin` de outro site. O navegador nunca fala com a Supabase, só com o próprio app.
 - **Banco**: RLS ligado em todas as tabelas e **nenhum privilégio** para as roles públicas (`anon` = publishable key, `authenticated`). Só a secret key (servidor) acessa. A API REST expõe só `public`/`graphql_public`; a GraphQL fica desligada.
 - **Agendamento**: o `CRON_SECRET` fica no Vault do Supabase. O schema `net` (pg_net) é liberado pelo próprio Supabase para `PUBLIC` e não dá para revogar sem ser `supabase_admin`, mas ele não é alcançável pela API: só por conexão direta ao banco, que exige a senha.
 - **Vercel**: variáveis marcadas como *Sensitive* (o valor não pode ser lido depois). As rotas exigem segredo: `x-telegram-bot-api-secret-token` no webhook, `Authorization: Bearer` no cron e no setup (nunca na URL). O bot só responde ao `TELEGRAM_ALLOWED_CHAT_ID` e ignora mensagens editadas. Deploys de preview ficam atrás do login da Vercel. Cabeçalhos `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`; respostas da API com `no-store`.

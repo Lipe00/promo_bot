@@ -74,8 +74,8 @@ before(async () => {
     if (Date.now() > until) throw new Error(`app não respondeu em ${APP}`);
     await sleep(1000);
   }
-  for (const t of ['offers', 'watches', 'sources', 'chat_settings', 'store_status', 'locks']) {
-    const filter = t === 'chat_settings' ? 'chat_id=gt.-9999999999999' : t === 'store_status' ? 'store=neq.__' : t === 'locks' ? 'name=neq.__' : 'id=gt.0';
+  for (const t of ['price_history', 'offers', 'sessions', 'users', 'watches', 'sources', 'chat_settings', 'store_status', 'locks']) {
+    const filter = t === 'chat_settings' ? 'chat_id=gt.-9999999999999' : t === 'store_status' ? 'store=neq.__' : t === 'locks' ? 'name=neq.__' : t === 'sessions' ? 'id=neq.__' : 'id=gt.0';
     await rest(`${t}?${filter}`, { method: 'DELETE' });
   }
   await fetch(`${MOCKS}/__messages`, { method: 'DELETE' });
@@ -179,6 +179,7 @@ test('fluxo completo pelo Telegram', { timeout: 300_000 }, async () => {
     'http://mocks:4000/loja/p/kabuto',
     'http://mocks:4000/loja/p/rtx4060',
     'http://mocks:4000/loja/p/rtx4060oc',
+    'http://mocks:4000/loja/p/rtx4060ti', // acima do teto: guardada só para o painel/histórico
   ]);
   const status = (await rest('store_status?store=like.custom*')) as { name: string; status: string }[];
   assert.equal(status[0]?.name, 'Loja Falsa');

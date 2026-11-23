@@ -27,6 +27,7 @@ services:
       - ../supabase/migrations/002_fontes_categorias_frete.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
       - ./init/03-grants.sql:/docker-entrypoint-initdb.d/03-grants.sql:ro
       - ../supabase/migrations/003_seguranca.sql:/docker-entrypoint-initdb.d/04-migration-003.sql:ro
+      - ../supabase/migrations/004_painel.sql:/docker-entrypoint-initdb.d/05-migration-004.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
@@ -81,6 +82,8 @@ services:
       TELEGRAM_ALLOWED_CHAT_ID: '4242'
       CRON_SECRET: e2e-cron-secret
       PROMO_DEV_HTTP_HOSTS: mocks
+      PASSWORD_SALT: 0000000000000000000000000000000000000000000000000000000000dev0salt
+      SESSION_SECRET: 1111111111111111111111111111111111111111111111111111111dev0session
       NEXT_TELEMETRY_DISABLED: '1'
     ports:
       - '3000:3000'
@@ -120,7 +123,7 @@ services:
     profiles: [e2e]
     image: node:22-bookworm-slim
     working_dir: /app
-    command: node --experimental-strip-types --no-warnings --test test/e2e/*.test.ts
+    command: node --experimental-strip-types --no-warnings --test --test-concurrency=1 test/e2e/*.test.ts
     volumes:
       - ..:/app
       - node_modules:/app/node_modules
@@ -132,6 +135,7 @@ services:
       TELEGRAM_WEBHOOK_SECRET: e2e-webhook-secret
       CRON_SECRET: e2e-cron-secret
       CHAT_ID: '4242'
+      PASSWORD_SALT: 0000000000000000000000000000000000000000000000000000000000dev0salt
 
 volumes:
   pgdata:

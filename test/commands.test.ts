@@ -195,3 +195,14 @@ test('texto do usuário é escapado nas respostas', async () => {
   assert.doesNotMatch(r.reply, /<b>x<\/b>/);
   assert.match(r.reply, /&lt;b&gt;x&lt;\/b&gt;/);
 });
+
+test('/promo liga e desliga "apenas promoções"; /lista mostra o selo', async () => {
+  const { ctx, state } = setup();
+  await handleCommand('/add kabuto | 300', ctx);
+  assert.match((await handleCommand('/promo 1', ctx)).reply, /só aviso ofertas com preço de\/por/);
+  assert.equal(state.watches[0]?.only_deals, true);
+  assert.match((await handleCommand('/lista', ctx)).reply, /🏷️ só promoções/);
+  assert.match((await handleCommand('/promo 1', ctx)).reply, /qualquer oferta/);
+  assert.equal(state.watches[0]?.only_deals, false);
+  assert.match((await handleCommand('/promo 99', ctx)).reply, /Não achei/);
+});

@@ -68,7 +68,9 @@ test('fluxo completo: filtra, respeita margem, deduplica e reavisa só quando mu
   assert.match(sent[0]!, /PICHAU/); // mais barato primeiro
   assert.match(sent[0]!, /Promoção até 27\/11 às 23:59/);
   assert.match(sent[1]!, /href="https:\/\/www\.kabum\.com\.br\/produto\/1"/); // sem parâmetro de rastreio
-  assert.equal(mem.offers.length, 2); // só o que entrou na faixa foi salvo
+  // Na faixa (2) + a "Premium" de R$ 500, guardada só para o painel/histórico (não gera alerta).
+  assert.equal(mem.offers.length, 3);
+  assert.ok(mem.offers.some((o) => o.price === 500 && o.last_alerted_price === null));
   assert.equal(r1.stores.amazon?.status, 'blocked');
   assert.equal(r1.stores.amazon?.name, 'AMAZON');
   assert.equal(mem.statuses.find((s) => s.store === 'amazon')?.status, 'blocked');

@@ -1,5 +1,5 @@
 import { BUILTIN_IDS, STORE_META, isBuiltinId } from './config.ts';
-import { formatBRL, priceCeiling } from './price.ts';
+import { formatBRL, isDeal, priceCeiling } from './price.ts';
 import type { AlertLevel, AlertReason } from './alerts.ts';
 import type { FreightMode, RawOffer, StoreResult, StoreStatusKind, StoreStatusRow, Watch } from './types.ts';
 
@@ -94,6 +94,7 @@ export function buildAlertMessage(p: AlertMessageInput): string {
   if (p.reason === 'lembrete') lines.push('🔁 lembrete: continua nessa faixa');
 
   if (offer.endsAt) lines.push(`⏰ Promoção até ${formatDateTimeBR(offer.endsAt)}`);
+  if (watch.only_deals && isDeal(offer)) lines.push('🏷️ Em promoção (busca marcada como "apenas promoções")');
 
   lines.push(`🔗 <a href="${escapeAttr(offer.url)}">Abrir na loja</a>`);
   lines.push(`<i>Busca #${watch.id}: ${escapeHtml(watchLabel(watch))}</i>`);

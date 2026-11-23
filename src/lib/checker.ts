@@ -4,7 +4,7 @@ import { DEFAULTS, hostAllowed } from './config.ts';
 import { buildAlertMessage, buildCategoryDigest } from './format.ts';
 import { canonicalUrl } from './jsonld.ts';
 import { matchesQuery, queryKey, searchTerms } from './matching.ts';
-import { effectivePrice, priceCeiling } from './price.ts';
+import { effectivePrice, isDeal, priceCeiling } from './price.ts';
 import { comparedPrice } from './shipping.ts';
 import { buildAdapters } from './stores/index.ts';
 import type {
@@ -162,6 +162,10 @@ export async function runChecks(deps: CheckDeps, opts: { chatId?: number } = {})
     );
   }
   if (deps.db.markChecked && checked.length > 0) await deps.db.markChecked(checked, now.toISOString());
+  if (deps.db.pruneHistory) {
+    const before = new Date(now.getTime() - DEFAULTS.historyRetentionDays * DAY_MS).toISOString();
+    await deps.db.pruneHistory(before).catch(() => {});
+  }
   return summary;
 }
 
@@ -170,6 +174,44 @@ interface Candidate {
   offer: RawOffer;
   url: string;
   price: number;
+}
+
+/** Links das N ofertas mais baratas de cada loja. */
+function cheapestPerStore(cands: Candidate[], n: number): Set<string> {
+  const byStore = new Map<string, Candidate[]>();
+  for (const c of cands) byStore.set(c.adapter.id, [...(byStore.get(c.adapter.id) ?? []), c]);
+  const out = new Set<string>();
+  for (const list of byStore.values()) {
+    for (const c of list.sort((a, b) => a.price - b.price).slice(0, n)) out.add(c.url);
+  }
+  return out;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Um ponto de histórico por oferta quando o preço mudou ou o último ponto tem mais de 24h. */
+async function recordHistory(
+  deps: CheckDeps,
+  watchId: number,
+  saved: { offerId: number; store: string; price: number }[],
+  now: Date,
+): Promise<void> {
+  const { db } = deps;
+  if (!db.insertPricePoints || !db.lastPricePoints || saved.length === 0) return;
+  try {
+    const since = new Date(now.getTime() - DAY_MS).toISOString();
+    const last = new Map((await db.lastPricePoints(saved.map((s) => s.offerId), since)).map((p) => [p.offer_id, p]));
+    const rows = saved
+      .filter((s) => {
+        const p = last.get(s.offerId);
+        return !p || Math.abs(p.price - s.price) >= 0.01;
+      })
+      .map((s) => ({ watch_id: watchId, offer_id: s.offerId, store: s.store, price: s.price, seen_at: now.toISOString() }));
+    if (rows.length > 0) await db.insertPricePoints(rows);
+  } catch (e) {
+    // Histórico é extra: se falhar, a checagem e os alertas continuam.
+    console.error('histórico falhou:', e instanceof Error ? e.message.slice(0, 200) : 'erro');
+  }
 }
 
 /** Lojas e resultados que valem para uma busca. */
@@ -234,17 +276,21 @@ async function processWatch(watch: Watch, state: RunState): Promise<void> {
   }
   for (const cand of byUrl.values()) cand.price = comparedPrice(cand.offer, ctx.settings.freight_mode);
 
-  // 3) Salva o que entrou na faixa e decide quem recebe alerta.
+  // 3) Salva as ofertas (as que estão na faixa e as mais baratas de cada loja, para o painel
+  //    mostrar o menor preço e o histórico) e decide quem recebe alerta.
+  const keep = cheapestPerStore([...byUrl.values()], DEFAULTS.historyPerStore);
   const existing = await deps.db.getOffersByUrl(watch.id, [...byUrl.keys()]);
   const known = new Map(existing.map((o) => [o.url, o]));
   const toAlert: { cand: Candidate; offerId: number; level: AlertLevel; reason: AlertReason }[] = [];
+  const saved: { offerId: number; store: string; price: number }[] = [];
 
   for (const cand of byUrl.values()) {
     const prev = known.get(cand.url) ?? null;
     const within = cand.price <= ceiling;
-    if (!prev && !within) continue; // não guarda o que nunca entrou na faixa
+    if (!prev && !within && !keep.has(cand.url)) continue;
 
-    const decision = decideAlert({
+    const deal = isDeal(cand.offer);
+    let decision = decideAlert({
       price: cand.price,
       target: watch.target_price,
       marginPct: watch.margin_pct,
@@ -252,6 +298,10 @@ async function processWatch(watch: Watch, state: RunState): Promise<void> {
       prev: prev ? { last_alerted_price: prev.last_alerted_price, last_alerted_at: prev.last_alerted_at } : null,
       now,
     });
+    // "Apenas promoções": sem preço de/por nem prazo, não avisa (e avisa como nova quando virar promoção).
+    if (watch.only_deals && !deal && decision.send) {
+      decision = { send: false, reason: 'sem promoção', resetAlertState: true };
+    }
 
     const shipping = typeof cand.offer.shippingPrice === 'number' ? cand.offer.shippingPrice : null;
     let offerId: number;
@@ -263,6 +313,7 @@ async function processWatch(watch: Watch, state: RunState): Promise<void> {
         regular_price: cand.offer.regularPrice ?? null,
         ends_at: cand.offer.endsAt ?? null,
         shipping_price: shipping,
+        is_deal: deal,
         lowest_price: Math.min(prev.lowest_price, cand.price),
         last_seen_at: now.toISOString(),
         ...(!decision.send && decision.resetAlertState ? { last_alerted_price: null, last_alerted_at: null } : {}),
@@ -277,13 +328,16 @@ async function processWatch(watch: Watch, state: RunState): Promise<void> {
         regular_price: cand.offer.regularPrice ?? null,
         ends_at: cand.offer.endsAt ?? null,
         shipping_price: shipping,
+        is_deal: deal,
         lowest_price: cand.price,
       });
       offerId = created.id;
     }
+    saved.push({ offerId, store: cand.adapter.id, price: cand.price });
 
     if (decision.send) toAlert.push({ cand, offerId, level: decision.level, reason: decision.reason });
   }
+  await recordHistory(deps, watch.id, saved, now);
   if (toAlert.length === 0) return;
 
   // 4) Envia: mais baratos primeiro. Produto = uma mensagem por oferta; categoria = um resumo.

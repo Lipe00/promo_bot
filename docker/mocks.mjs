@@ -13,6 +13,9 @@ const CATALOG = [
   { name: 'Placa de Vídeo RTX 4060 8GB', price: '1899.00', slug: 'rtx4060' },
   { name: 'Placa de Vídeo RTX 4060 Ti 16GB', price: '2899.00', slug: 'rtx4060ti' },
   { name: 'Placa de Vídeo RTX 4060 OC White', price: '1949.00', slug: 'rtx4060oc' },
+  // Para o teste de "apenas promoções": um sem prazo e um com prazo de fim.
+  { name: 'Mouse Gamer Pro X', price: '149.90', slug: 'mouse' },
+  { name: 'Mouse Gamer Pro X Edição Limitada', price: '159.90', slug: 'mouse-promo', until: '2099-06-30' },
 ];
 
 function storePage(q) {

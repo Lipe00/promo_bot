@@ -1,18 +1,28 @@
 import { createClient } from '@supabase/supabase-js';
 import type {
+  AuthDb,
   ChatSettings,
   CheckerDb,
   CommandDb,
+  DashboardDb,
   FreightMode,
   NewOffer,
   OfferPatch,
+  PricePoint,
   Source,
   StoredOffer,
   StoreStatusRow,
+  User,
   Watch,
 } from './types.ts';
 
-export type Db = CommandDb & CheckerDb & Required<Pick<CheckerDb, 'getSettings' | 'listSources' | 'markChecked'>>;
+export type Db = CommandDb &
+  CheckerDb &
+  AuthDb &
+  DashboardDb &
+  Required<
+    Pick<CheckerDb, 'getSettings' | 'listSources' | 'markChecked' | 'lastPricePoints' | 'insertPricePoints' | 'pruneHistory'>
+  >;
 
 function check(ctx: string, error: { message: string } | null): void {
   if (error) throw new Error(`${ctx}: ${error.message}`);
@@ -43,6 +53,10 @@ function toOffer(row: Record<string, unknown>): StoredOffer {
     shipping_price: n(row.shipping_price),
     last_alerted_price: n(row.last_alerted_price),
   };
+}
+
+function toPoint(row: Record<string, unknown>): PricePoint {
+  return { ...(row as unknown as PricePoint), price: num(row.price) };
 }
 
 export function createDb(url: string, serviceRoleKey: string): Db {
@@ -200,6 +214,112 @@ export function createDb(url: string, serviceRoleKey: string): Db {
         const { error } = await sb.from('watches').update({ last_checked_at: at }).in('id', part);
         check('markChecked', error);
       }
+    },
+
+    async lastPricePoints(offerIds, since) {
+      const out: { offer_id: number; price: number; seen_at: string }[] = [];
+      for (const part of chunk(offerIds, 50)) {
+        const { data, error } = await sb
+          .from('price_history')
+          .select('offer_id, price, seen_at')
+          .in('offer_id', part)
+          .gte('seen_at', since)
+          .order('seen_at', { ascending: false });
+        check('lastPricePoints', error);
+        const seen = new Set<number>();
+        for (const r of (data ?? []) as Record<string, unknown>[]) {
+          const id = num(r.offer_id);
+          if (seen.has(id)) continue;
+          seen.add(id);
+          out.push({ offer_id: id, price: num(r.price), seen_at: String(r.seen_at) });
+        }
+      }
+      return out;
+    },
+
+    async insertPricePoints(rows) {
+      for (const part of chunk(rows, 200)) {
+        const { error } = await sb.from('price_history').insert(part);
+        check('insertPricePoints', error);
+      }
+    },
+
+    async pruneHistory(before) {
+      const { error } = await sb.from('price_history').delete().lt('seen_at', before);
+      check('pruneHistory', error);
+    },
+
+    // ----- painel -----
+    async listOffersByWatches(watchIds) {
+      const found: StoredOffer[] = [];
+      for (const part of chunk(watchIds, 50)) {
+        const { data, error } = await sb.from('offers').select('*').in('watch_id', part).order('price');
+        check('listOffersByWatches', error);
+        found.push(...((data ?? []) as Record<string, unknown>[]).map(toOffer));
+      }
+      return found;
+    },
+
+    async listHistory(watchId, since) {
+      const { data, error } = await sb
+        .from('price_history')
+        .select('*')
+        .eq('watch_id', watchId)
+        .gte('seen_at', since)
+        .order('seen_at')
+        .limit(5000);
+      check('listHistory', error);
+      return ((data ?? []) as Record<string, unknown>[]).map(toPoint);
+    },
+
+    // ----- contas -----
+    async getUserByUsername(username) {
+      const { data, error } = await sb.from('users').select('*').eq('username', username).maybeSingle();
+      check('getUserByUsername', error);
+      return (data as User | null) ?? null;
+    },
+
+    async getUserById(id) {
+      const { data, error } = await sb.from('users').select('*').eq('id', id).maybeSingle();
+      check('getUserById', error);
+      return (data as User | null) ?? null;
+    },
+
+    async touchLogin(id, at) {
+      const { error } = await sb.from('users').update({ last_login_at: at }).eq('id', id);
+      check('touchLogin', error);
+    },
+
+    async upsertUser(username, passwordHash, chatId) {
+      const { data, error } = await sb
+        .from('users')
+        .upsert({ username, password_hash: passwordHash, chat_id: chatId }, { onConflict: 'username' })
+        .select()
+        .single();
+      check('upsertUser', error);
+      return data as User;
+    },
+
+    async createSession(row) {
+      const { error } = await sb.from('sessions').insert(row);
+      check('createSession', error);
+    },
+
+    async getSessionRow(id) {
+      const { data, error } = await sb.from('sessions').select('id, user_id, expires_at').eq('id', id).maybeSingle();
+      check('getSessionRow', error);
+      const row = data as { id: string; user_id: number | string; expires_at: string } | null;
+      return row ? { id: row.id, user_id: Number(row.user_id), expires_at: row.expires_at } : null;
+    },
+
+    async deleteSession(id) {
+      const { error } = await sb.from('sessions').delete().eq('id', id);
+      check('deleteSession', error);
+    },
+
+    async deleteUserSessions(userId) {
+      const { error } = await sb.from('sessions').delete().eq('user_id', userId);
+      check('deleteUserSessions', error);
     },
 
     async tryLock(name, ttlSeconds) {

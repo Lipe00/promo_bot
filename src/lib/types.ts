@@ -97,6 +97,8 @@ export interface Watch {
   category_url?: string | null;
   /** Lojas desta busca (ids). null = todas as ligadas. */
   stores?: string[] | null;
+  /** Só avisa ofertas com preço de/por (riscado maior) ou com prazo de fim. */
+  only_deals?: boolean;
   last_checked_at?: string | null;
 }
 
@@ -107,7 +109,10 @@ export interface NewWatch {
   kind: WatchKind;
   category_url: string | null;
   stores: string[] | null;
+  only_deals?: boolean;
 }
+
+export type WatchPatch = Partial<Pick<Watch, 'target_price' | 'margin_pct' | 'active' | 'stores' | 'only_deals'>>;
 
 export interface StoredOffer {
   id: number;
@@ -119,6 +124,8 @@ export interface StoredOffer {
   regular_price: number | null;
   ends_at: string | null;
   shipping_price?: number | null;
+  /** Tinha desconto (de/por) ou prazo de fim na última vez que foi vista. */
+  is_deal?: boolean;
   lowest_price: number;
   first_seen_at: string;
   last_seen_at: string;
@@ -135,6 +142,7 @@ export interface NewOffer {
   regular_price: number | null;
   ends_at: string | null;
   shipping_price: number | null;
+  is_deal?: boolean;
   lowest_price: number;
 }
 
@@ -146,6 +154,7 @@ export type OfferPatch = Partial<
     | 'regular_price'
     | 'ends_at'
     | 'shipping_price'
+    | 'is_deal'
     | 'lowest_price'
     | 'last_seen_at'
     | 'last_alerted_price'
@@ -193,11 +202,7 @@ export interface NewCustomSource {
 export interface CommandDb {
   addWatch(chatId: number, w: NewWatch): Promise<Watch>;
   listWatches(chatId: number): Promise<Watch[]>;
-  updateWatch(
-    chatId: number,
-    id: number,
-    patch: Partial<Pick<Watch, 'target_price' | 'margin_pct' | 'active' | 'stores'>>,
-  ): Promise<Watch | null>;
+  updateWatch(chatId: number, id: number, patch: WatchPatch): Promise<Watch | null>;
   deleteWatch(chatId: number, id: number): Promise<boolean>;
   getCep(chatId: number): Promise<string | null>;
   setCep(chatId: number, cep: string): Promise<void>;
@@ -221,6 +226,59 @@ export interface CheckerDb {
   getSettings?(chatId: number): Promise<ChatSettings>;
   listSources?(chatId: number): Promise<Source[]>;
   markChecked?(watchIds: number[], at: string): Promise<void>;
+  /** Último ponto de histórico de cada oferta, olhando só a partir de `since`. */
+  lastPricePoints?(offerIds: number[], since: string): Promise<{ offer_id: number; price: number; seen_at: string }[]>;
+  insertPricePoints?(rows: NewPricePoint[]): Promise<void>;
+  /** Apaga histórico anterior a esta data. */
+  pruneHistory?(before: string): Promise<void>;
   tryLock(name: string, ttlSeconds: number): Promise<boolean>;
   unlock(name: string): Promise<void>;
+}
+
+export interface NewPricePoint {
+  watch_id: number;
+  offer_id: number;
+  store: string;
+  price: number;
+  seen_at: string;
+}
+
+export interface PricePoint extends NewPricePoint {
+  id: number;
+}
+
+/** Conta do painel web. */
+export interface User {
+  id: number;
+  username: string;
+  password_hash: string;
+  chat_id: number;
+  last_login_at: string | null;
+}
+
+/** Sessão aberta (um aparelho). */
+export interface SessionRow {
+  id: string;
+  user_id: number;
+  expires_at: string;
+}
+
+/** O que o login precisa do banco. */
+export interface AuthDb {
+  getUserByUsername(username: string): Promise<User | null>;
+  getUserById(id: number): Promise<User | null>;
+  touchLogin(id: number, at: string): Promise<void>;
+  /** Cria a conta ou troca a senha/chat dela. */
+  upsertUser(username: string, passwordHash: string, chatId: number): Promise<User>;
+  createSession(row: SessionRow): Promise<void>;
+  getSessionRow(id: string): Promise<SessionRow | null>;
+  deleteSession(id: string): Promise<void>;
+  /** Encerra todas as sessões da conta (ex.: ao trocar a senha). */
+  deleteUserSessions(userId: number): Promise<void>;
+}
+
+/** O que o painel precisa do banco (além do CommandDb). */
+export interface DashboardDb {
+  listOffersByWatches(watchIds: number[]): Promise<StoredOffer[]>;
+  listHistory(watchId: number, since: string): Promise<PricePoint[]>;
 }

@@ -39,6 +39,10 @@ export const DEFAULTS = {
   runBudgetMs: 45_000,
   /** Se faltar menos que isso, não começa outra busca. */
   perWatchReserveMs: 12_000,
+  /** Ofertas guardadas por loja em cada busca, mesmo acima do teto (menor preço e histórico do painel). */
+  historyPerStore: 3,
+  /** Dias de histórico de preços guardados. */
+  historyRetentionDays: 180,
 } as const;
 
 /** Hosts liberados em HTTP só para testes locais (ex.: PROMO_DEV_HTTP_HOSTS=mocks). */

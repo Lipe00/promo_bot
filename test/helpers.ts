@@ -1,13 +1,18 @@
 // Bancos em memória usados pelos testes (mesma interface do Supabase).
 import type {
+  AuthDb,
   ChatSettings,
   CheckerDb,
   CommandDb,
+  DashboardDb,
   NewOffer,
   OfferPatch,
+  PricePoint,
+  SessionRow,
   Source,
   StoredOffer,
   StoreStatusRow,
+  User,
   Watch,
 } from '../src/lib/types.ts';
 
@@ -19,12 +24,68 @@ export function memoryDb(initial: { watches?: Watch[]; sources?: Source[]; setti
     settings: new Map<number, ChatSettings>(),
     statuses: [] as Omit<StoreStatusRow, 'checked_at'>[],
     checked: [] as number[],
+    history: [] as PricePoint[],
+    users: [] as User[],
+    sessions: [] as SessionRow[],
+    pruned: [] as string[],
     seq: 100,
   };
   const settingsOf = (chatId: number): ChatSettings =>
     state.settings.get(chatId) ?? { cep: initial.settings?.cep ?? null, freight_mode: initial.settings?.freight_mode ?? 'total' };
 
-  const db: CommandDb & CheckerDb = {
+  const db: CommandDb & CheckerDb & AuthDb & DashboardDb = {
+    async lastPricePoints(offerIds, since) {
+      const out = new Map<number, { offer_id: number; price: number; seen_at: string }>();
+      for (const p of [...state.history].sort((a, b) => a.seen_at.localeCompare(b.seen_at))) {
+        if (offerIds.includes(p.offer_id) && p.seen_at >= since) out.set(p.offer_id, { offer_id: p.offer_id, price: p.price, seen_at: p.seen_at });
+      }
+      return [...out.values()];
+    },
+    async insertPricePoints(rows) {
+      for (const r of rows) state.history.push({ id: ++state.seq, ...r });
+    },
+    async pruneHistory(before) {
+      state.pruned.push(before);
+      state.history = state.history.filter((p) => p.seen_at >= before);
+    },
+    async listOffersByWatches(ids) {
+      return state.offers.filter((o) => ids.includes(o.watch_id)).sort((a, b) => a.price - b.price);
+    },
+    async listHistory(watchId, since) {
+      return state.history.filter((p) => p.watch_id === watchId && p.seen_at >= since);
+    },
+    async getUserByUsername(u) {
+      return state.users.find((x) => x.username === u) ?? null;
+    },
+    async getUserById(id) {
+      return state.users.find((x) => x.id === id) ?? null;
+    },
+    async touchLogin(id, at) {
+      const u = state.users.find((x) => x.id === id);
+      if (u) u.last_login_at = at;
+    },
+    async upsertUser(username, hash, chatId) {
+      const u = state.users.find((x) => x.username === username);
+      if (u) {
+        Object.assign(u, { password_hash: hash, chat_id: chatId });
+        return u;
+      }
+      const created: User = { id: ++state.seq, username, password_hash: hash, chat_id: chatId, last_login_at: null };
+      state.users.push(created);
+      return created;
+    },
+    async createSession(row) {
+      state.sessions.push({ ...row });
+    },
+    async getSessionRow(id) {
+      return state.sessions.find((s) => s.id === id) ?? null;
+    },
+    async deleteSession(id) {
+      state.sessions = state.sessions.filter((s) => s.id !== id);
+    },
+    async deleteUserSessions(userId) {
+      state.sessions = state.sessions.filter((s) => s.user_id !== userId);
+    },
     async addWatch(chatId, w) {
       const row: Watch = { id: state.watches.length + 1, chat_id: chatId, active: true, created_at: '2026-11-22T00:00:00Z', last_checked_at: null, ...w };
       state.watches.push(row);

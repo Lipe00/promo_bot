@@ -1,11 +1,11 @@
-import { BUILTIN_IDS, DEFAULTS, STORE_META, hostAllowed } from './config.ts';
+import { BUILTIN_IDS, DEFAULTS, STORE_META } from './config.ts';
 import { buildStatusMessage, escapeHtml, watchLabel } from './format.ts';
-import { normalizeText, searchTerms } from './matching.ts';
 import { formatBRL, parsePriceBRL, priceCeiling } from './price.ts';
 import { parseFreightMode } from './shipping.ts';
 import { checkTemplate } from './stores/generic.ts';
-import { buildAdapters, viaLabel } from './stores/index.ts';
-import type { BuiltinStoreId, CommandDb, StoreAdapter, Watch } from './types.ts';
+import { viaLabel } from './stores/index.ts';
+import type { CommandDb, StoreAdapter, Watch } from './types.ts';
+import { buildNewWatch, parseMargin, parseStoreList, resolveStore } from './watch-input.ts';
 
 export interface CommandResult {
   reply: string;
@@ -26,56 +26,12 @@ export type AddParse =
   | { ok: true; query: string; target: number; margin: number | null; stores: string[] | null }
   | { ok: false; error: string };
 
-export function parseMargin(input: string | undefined): number | null {
-  if (input === undefined) return null;
-  const s = input.trim().replace('%', '').replace(',', '.');
-  if (!s) return null;
-  const n = Number(s);
-  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : null;
-}
+export { parseMargin, parseStoreList, resolveStore };
 
 /** "12345678" ou "12345-678" → "12345-678". */
 export function parseCep(input: string): string | null {
   const digits = input.replace(/\D/g, '');
   return digits.length === 8 ? `${digits.slice(0, 5)}-${digits.slice(5)}` : null;
-}
-
-const STORE_ALIASES: Record<string, BuiltinStoreId> = {
-  ml: 'mercadolivre',
-  meli: 'mercadolivre',
-  mercadolivre: 'mercadolivre',
-  mercadolibre: 'mercadolivre',
-  amazon: 'amazon',
-  amz: 'amazon',
-  shopee: 'shopee',
-  aliexpress: 'aliexpress',
-  ali: 'aliexpress',
-  kabum: 'kabum',
-};
-
-/** "Mercado Livre", "ml", "KaBuM!" → id da loja embutida. */
-export function resolveStore(input: string): BuiltinStoreId | null {
-  const key = normalizeText(input).replace(/\s+/g, '');
-  return STORE_ALIASES[key] ?? null;
-}
-
-/** "kabum, amazon" → ['kabum','amazon']; "todas" → null. */
-export function parseStoreList(input: string | undefined): { ok: true; stores: string[] | null } | { ok: false; error: string } {
-  const s = (input ?? '').trim();
-  if (!s || /^(todas|todos|all|\*)$/i.test(s)) return { ok: true, stores: null };
-  const out: string[] = [];
-  for (const part of s.split(/[,;]+/)) {
-    if (!part.trim()) continue;
-    const custom = part.trim().match(/^#?(\d{1,9})$/);
-    if (custom) {
-      out.push(`custom:${custom[1]}`);
-      continue;
-    }
-    const id = resolveStore(part);
-    if (!id) return { ok: false, error: `Não conheço a loja "${part.trim()}". Veja /lojas.` };
-    out.push(id);
-  }
-  return { ok: true, stores: out.length > 0 ? [...new Set(out)] : null };
 }
 
 /**
@@ -150,6 +106,7 @@ const HELP = [
   '',
   '<b>Gerenciar</b>',
   '/lista · /preco id valor · /margem id % · /pausar id · /ativar id · /remover id',
+  '/promo id — liga/desliga "apenas promoções" (só avisa com preço de/por ou prazo)',
   '',
   '<b>Lojas e fontes</b>',
   '/lojas — lojas e como cada uma é lida',
@@ -168,7 +125,8 @@ const HELP = [
 function describeWatch(w: Watch): string {
   const icon = w.active ? '✅' : '⏸️';
   const ceiling = priceCeiling(w.target_price, w.margin_pct);
-  const stores = w.stores && w.stores.length > 0 ? ` · lojas: ${w.stores.join(', ')}` : '';
+  const stores =
+    (w.stores && w.stores.length > 0 ? ` · lojas: ${w.stores.join(', ')}` : '') + (w.only_deals ? ' · 🏷️ só promoções' : '');
   if (w.kind === 'categoria') {
     return `#${w.id} ${icon} 📦 <b>${escapeHtml(watchLabel(w))}</b> — até ${formatBRL(ceiling)}${escapeHtml(stores)}`;
   }
@@ -201,19 +159,12 @@ export async function handleCommand(text: string, ctx: CommandCtx): Promise<Comm
       if (!parsed.ok) {
         return { reply: `${parsed.error}\nExemplo: <code>/add force one kabuto | 300 | 15</code>` };
       }
-      if (/^https?:\/\//i.test(parsed.query)) {
-        return { reply: 'Para link de categoria use /categoria. Ex.: <code>/categoria https://... | 2000</code>' };
-      }
-      if (!searchTerms(parsed.query)) return { reply: 'Escreva pelo menos uma palavra sem “-”.' };
-      const margin = parsed.margin ?? DEFAULTS.marginPct;
-      const w = await db.addWatch(chatId, {
-        query: parsed.query,
-        target_price: parsed.target,
-        margin_pct: margin,
-        kind: 'produto',
-        category_url: null,
-        stores: parsed.stores,
-      });
+      const built = buildNewWatch(
+        { kind: 'produto', query: parsed.query, target: parsed.target, margin: parsed.margin, stores: parsed.stores },
+        { builtins: ctx.builtins ?? [], sources: await db.listSources(chatId) },
+      );
+      if (!built.ok) return { reply: built.error };
+      const w = await db.addWatch(chatId, built.watch);
       return {
         reply:
           `✅ Busca #${w.id} criada: <b>${escapeHtml(w.query)}</b>\n` +
@@ -233,31 +184,12 @@ export async function handleCommand(text: string, ctx: CommandCtx): Promise<Comm
             '<code>/categoria https://www.kabum.com.br/hardware/placa-de-video-vga | 2000</code>',
         };
       }
-      const margin = parsed.margin ?? DEFAULTS.categoryMarginPct;
-      let categoryUrl: string | null = null;
-      if (/^https?:\/\//i.test(parsed.query)) {
-        const url = parsed.query.trim();
-        const sources = await db.listSources(chatId);
-        const adapters = buildAdapters(ctx.builtins ?? [], sources);
-        const knownDomains = adapters.length > 0 ? adapters : null;
-        const allowed = knownDomains
-          ? knownDomains.some((a) => a.listing && hostAllowed(url, a.domains))
-          : BUILTIN_IDS.some((id) => hostAllowed(url, STORE_META[id].domains));
-        if (!allowed) {
-          return { reply: 'Esse link não é de uma loja cadastrada (veja /lojas). Só aceito https:// de lojas conhecidas.' };
-        }
-        categoryUrl = url;
-      } else if (!searchTerms(parsed.query)) {
-        return { reply: 'Escreva pelo menos uma palavra sem “-”.' };
-      }
-      const w = await db.addWatch(chatId, {
-        query: parsed.query,
-        target_price: parsed.target,
-        margin_pct: margin,
-        kind: 'categoria',
-        category_url: categoryUrl,
-        stores: categoryUrl ? null : parsed.stores,
-      });
+      const built = buildNewWatch(
+        { kind: 'categoria', query: parsed.query, target: parsed.target, margin: parsed.margin, stores: parsed.stores },
+        { builtins: ctx.builtins ?? [], sources: await db.listSources(chatId) },
+      );
+      if (!built.ok) return { reply: built.error };
+      const w = await db.addWatch(chatId, built.watch);
       return {
         reply:
           `📦 Categoria #${w.id} criada: <b>${escapeHtml(watchLabel(w))}</b>\n` +
@@ -298,6 +230,21 @@ export async function handleCommand(text: string, ctx: CommandCtx): Promise<Comm
       if (id === null || price === null) return { reply: 'Use: /preco id valor (ex.: /preco 1 280)' };
       const w = await db.updateWatch(chatId, id, { target_price: price });
       return w ? { reply: `Atualizado:\n${describeWatch(w)}` } : notFound(id);
+    }
+
+    case 'promo':
+    case 'promocao': {
+      const id = parseId(args);
+      if (id === null) return { reply: 'Use: /promo id (liga ou desliga "apenas promoções" na busca)' };
+      const current = (await db.listWatches(chatId)).find((x) => x.id === id);
+      if (!current) return notFound(id);
+      const w = await db.updateWatch(chatId, id, { only_deals: !current.only_deals });
+      if (!w) return notFound(id);
+      return {
+        reply: w.only_deals
+          ? `🏷️ Busca #${id}: só aviso ofertas com preço de/por ou com prazo de fim.`
+          : `Busca #${id}: aviso qualquer oferta na faixa.`,
+      };
     }
 
     case 'margem': {
