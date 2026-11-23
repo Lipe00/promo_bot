@@ -21,22 +21,25 @@ const COMMANDS = [
 ];
 
 /**
- * Abra uma vez depois do deploy: https://SEU-APP.vercel.app/api/telegram/setup?key=SEU_CRON_SECRET
+ * Chame uma vez depois do deploy, com o segredo no header (nunca na URL: URLs ficam em logs e histórico):
+ *   curl -X POST -H "Authorization: Bearer SEU_CRON_SECRET" https://SEU-APP.vercel.app/api/telegram/setup
  * Registra o webhook do Telegram e o menu de comandos.
  */
-export async function GET(req: Request): Promise<Response> {
+async function handle(req: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET;
   if (!secret) return NextResponse.json({ error: 'CRON_SECRET não configurado' }, { status: 500 });
 
-  const url = new URL(req.url);
-  if (!safeEqual(url.searchParams.get('key') ?? '', secret)) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  if (!safeEqual(req.headers.get('authorization') ?? '', `Bearer ${secret}`)) {
+    return NextResponse.json(
+      { error: 'forbidden', hint: 'envie o segredo no header Authorization: Bearer <CRON_SECRET>' },
+      { status: 403 },
+    );
   }
 
   try {
     const token = requireEnv('TELEGRAM_BOT_TOKEN');
     const webhookSecret = requireEnv('TELEGRAM_WEBHOOK_SECRET');
-    const webhookUrl = `${url.origin}/api/telegram`;
+    const webhookUrl = `${new URL(req.url).origin}/api/telegram`;
     await telegramCall(token, 'setWebhook', {
       url: webhookUrl,
       secret_token: webhookSecret,
@@ -46,6 +49,11 @@ export async function GET(req: Request): Promise<Response> {
     await telegramCall(token, 'setMyCommands', { commands: COMMANDS });
     return NextResponse.json({ ok: true, webhook: webhookUrl });
   } catch (e) {
-    return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : 'erro' }, { status: 500 });
+    // Sem detalhes: a mensagem do Telegram pode repetir dados da chamada.
+    console.error('setup falhou:', e instanceof Error ? e.message.slice(0, 200) : 'erro');
+    return NextResponse.json({ ok: false, error: 'falha ao registrar o webhook; veja os logs' }, { status: 500 });
   }
 }
+
+export const GET = handle;
+export const POST = handle;

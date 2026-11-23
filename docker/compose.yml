@@ -26,6 +26,7 @@ services:
       - ../supabase/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ../supabase/migrations/002_fontes_categorias_frete.sql:/docker-entrypoint-initdb.d/02-migration.sql:ro
       - ./init/03-grants.sql:/docker-entrypoint-initdb.d/03-grants.sql:ro
+      - ../supabase/migrations/003_seguranca.sql:/docker-entrypoint-initdb.d/04-migration-003.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']

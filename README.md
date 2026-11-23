@@ -48,8 +48,8 @@ Cadastre na Vercel em **Settings → Environment Variables** (nunca pelo Telegra
 ### 2. Supabase
 1. Crie um projeto em supabase.com (região São Paulo).
 2. **SQL Editor → New query**: cole `supabase/schema.sql` e rode.
-   - **Já tinha rodado a versão antiga?** Rode só `supabase/migrations/002_fontes_categorias_frete.sql` (pode rodar mais de uma vez).
-3. **Project Settings → API**: copie a **Project URL** e a chave **service_role** (secreta; só no servidor).
+   - **Já tinha rodado a versão antiga?** Rode `supabase/migrations/002_fontes_categorias_frete.sql` e depois `003_seguranca.sql` (os dois podem rodar mais de uma vez).
+3. **Project Settings → API Keys**: copie a **Project URL** e a **Secret key** (`sb_secret_...`, a substituta da antiga `service_role`; só no servidor). Não use a *publishable key*.
 
 ### 3. Vercel
 1. Suba esta pasta para um repositório **privado** no GitHub e importe na Vercel (**Add New → Project**).
@@ -59,16 +59,19 @@ Cadastre na Vercel em **Settings → Environment Variables** (nunca pelo Telegra
 3. Faça o deploy. O `vercel.json` coloca a função em São Paulo (`gru1`), mais perto das lojas.
 
 ### 4. Ligar o Telegram ao app
-1. Abra no navegador: `https://SEU-APP.vercel.app/api/telegram/setup?key=SEU_CRON_SECRET`
-   (registra o webhook e o menu de comandos; deve responder `{"ok":true,...}`).
+1. Registre o webhook e o menu de comandos (o segredo vai no header, nunca na URL; deve responder `ok: True`):
+   ```powershell
+   Invoke-RestMethod -Method Post -Uri "https://SEU-APP.vercel.app/api/telegram/setup" -Headers @{ Authorization = "Bearer SEU_CRON_SECRET" }
+   ```
 2. Mande `/start` pro seu bot. Ele responde com o seu **chat id**.
 3. Cadastre `TELEGRAM_ALLOWED_CHAT_ID` com esse número na Vercel e faça **Redeploy**.
    A partir daí só você consegue usar o bot; mensagens de outras pessoas são ignoradas.
 
-> Se você testou o bot no Docker local (modo `real`), o webhook foi apagado. É só abrir o link do passo 4.1 de novo.
+> Se você testou o bot no Docker local (modo `real`), o webhook foi apagado. É só rodar o comando do passo 4.1 de novo.
 
 ### 5. Agendamento
 No Supabase, **SQL Editor**, abra `supabase/cron.sql`, troque `SEU-APP` e `SEU_CRON_SECRET` e rode.
+O segredo fica guardado no **Vault** do Supabase (criptografado), não no texto do job. Para trocar o `CRON_SECRET`, mude na Vercel e rode o `cron.sql` de novo com o valor novo.
 Por padrão roda **a cada 3 horas**. O cron grátis da Vercel só roda 1x por dia, por isso o agendamento fica no `pg_cron` do Supabase.
 
 Cada rodada trabalha no máximo ~45s (a função tem 60s). Se você tiver muitas buscas, as que não couberem entram primeiro na rodada seguinte; nenhuma fica para trás.
@@ -138,7 +141,7 @@ Com `TELEGRAM_BOT_TOKEN` e `TELEGRAM_WEBHOOK_SECRET` no `.env.local`:
 ```powershell
 docker compose -f docker/compose.yml --profile real up -d
 ```
-O serviço `poller` busca as mensagens do Telegram (o Telegram não alcança `localhost` por webhook) e repassa ao app. Ele **apaga o webhook** do bot: depois de testar, abra `/api/telegram/setup` da Vercel de novo.
+O serviço `poller` busca as mensagens do Telegram (o Telegram não alcança `localhost` por webhook) e repassa ao app. Ele **apaga o webhook** do bot: depois de testar, rode de novo o comando do passo 4.1.
 Banco local: `http://localhost:54321` (some com `docker compose -f docker/compose.yml --profile mock --profile real down -v`).
 
 ## Quando uma loja quebrar
@@ -178,8 +181,15 @@ scripts/                            calibrate.ts (lojas reais) e make-fixtures.m
 test/                               unidade · e2e/ · live/ · fixtures/
 ```
 
+## Segurança (auditado em 22/11/2026)
+
+- **Banco**: RLS ligado em todas as tabelas e **nenhum privilégio** para as roles públicas (`anon` = publishable key, `authenticated`). Só a secret key (servidor) acessa. A API REST expõe só `public`/`graphql_public`; a GraphQL fica desligada.
+- **Agendamento**: o `CRON_SECRET` fica no Vault do Supabase. O schema `net` (pg_net) é liberado pelo próprio Supabase para `PUBLIC` e não dá para revogar sem ser `supabase_admin`, mas ele não é alcançável pela API: só por conexão direta ao banco, que exige a senha.
+- **Vercel**: variáveis marcadas como *Sensitive* (o valor não pode ser lido depois). As rotas exigem segredo: `x-telegram-bot-api-secret-token` no webhook, `Authorization: Bearer` no cron e no setup (nunca na URL). O bot só responde ao `TELEGRAM_ALLOWED_CHAT_ID` e ignora mensagens editadas. Deploys de preview ficam atrás do login da Vercel. Cabeçalhos `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`; respostas da API com `no-store`.
+- **Repositório**: nenhum segredo no histórico; `.env*` e `.vercelignore` impedem o envio de arquivos locais.
+
 ## Avisos
 
 - Ler páginas de lojas automaticamente pode ir contra os termos de uso delas, mesmo em volume baixo. O bot é feito para uso pessoal e leve (poucas requisições, com intervalo, respeitando robots.txt), mas a responsabilidade é sua.
 - O plano Hobby da Vercel é para uso pessoal e não comercial.
-- Nunca commite o `.env.local`. A chave `service_role` dá acesso total ao banco. O token do bot também: se ele vazar, gere outro no @BotFather (`/revoke`).
+- Nunca commite o `.env.local` nem o `.env.deploy.local`. A secret key do Supabase dá acesso total ao banco. O token do bot também: se ele vazar, gere outro no @BotFather (`/revoke`).

@@ -92,6 +92,25 @@ test('segredo errado do webhook é recusado; cron exige o segredo', async () => 
   assert.equal(c.status, 401);
 });
 
+test('setup do webhook: segredo só no header, nunca na URL', async () => {
+  const viaQuery = await fetch(`${APP}/api/telegram/setup?key=${CRON}`);
+  assert.equal(viaQuery.status, 403);
+  const ok = await fetch(`${APP}/api/telegram/setup`, { method: 'POST', headers: { authorization: `Bearer ${CRON}` } });
+  assert.equal(ok.status, 200);
+  assert.equal(((await ok.json()) as { ok: boolean }).ok, true);
+  const calls = (await messages()).filter((m) => m.method === 'setWebhook');
+  assert.ok(calls.length > 0);
+});
+
+test('cabeçalhos de segurança e API sem cache', async () => {
+  const home = await fetch(`${APP}/`);
+  assert.equal(home.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(home.headers.get('x-frame-options'), 'DENY');
+  assert.equal(home.headers.get('x-powered-by'), null);
+  const api = await fetch(`${APP}/api/cron/check`);
+  assert.match(api.headers.get('cache-control') ?? '', /no-store/);
+});
+
 test('fluxo completo pelo Telegram', { timeout: 300_000 }, async () => {
   assert.match(await say('/start'), /Promo Bot/);
 

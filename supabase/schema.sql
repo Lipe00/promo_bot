@@ -103,3 +103,14 @@ alter table public.locks         enable row level security;
 
 revoke all on function public.try_lock(text, int) from public, anon, authenticated;
 grant execute on function public.try_lock(text, int) to service_role;
+alter function public.try_lock(text, int) set search_path = '';
+
+-- Defesa extra: as roles públicas (anon = publishable key, authenticated) não têm nenhum privilégio.
+-- O RLS já bloqueia linhas, mas TRUNCATE não passa pelo RLS; sem GRANT, nem isso.
+revoke all on table
+  public.chat_settings, public.watches, public.offers, public.sources, public.store_status, public.locks
+from anon, authenticated;
+revoke all on all sequences in schema public from anon, authenticated;
+alter default privileges in schema public revoke all on tables from anon, authenticated;
+alter default privileges in schema public revoke all on sequences from anon, authenticated;
+alter default privileges in schema public revoke execute on functions from anon, authenticated;

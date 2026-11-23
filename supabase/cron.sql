@@ -1,13 +1,28 @@
--- Agendamento da checagem. Rode DEPOIS do deploy na Vercel.
+-- Agendamento da checagem. Rode DEPOIS do deploy na Vercel (e depois do schema/migrações).
 -- Por que aqui e não no Vercel Cron: no plano Hobby o cron da Vercel roda no máximo 1x por dia.
 -- O pg_cron do Supabase aceita qualquer intervalo e só precisa chamar a URL do app.
+--
+-- Troque SEU-APP e SEU_CRON_SECRET (mesmo valor da variável CRON_SECRET na Vercel).
+-- O segredo fica no Vault (criptografado), não no texto do job.
 
 create extension if not exists pg_cron;
-create extension if not exists pg_net;
+create extension if not exists pg_net with schema extensions;
 
--- Troque SEU-APP e SEU_CRON_SECRET (mesmo valor da variável CRON_SECRET na Vercel).
--- '0 */3 * * *' = a cada 3 horas, no minuto 0 (horário UTC). Não precisa ser mais frequente que 1h:
--- o bot lê páginas de lojas de verdade, e quanto mais você insiste, maior a chance de bloqueio.
+-- Guarda (ou atualiza) o segredo no Vault.
+do $$
+declare
+  sid uuid;
+begin
+  select id into sid from vault.secrets where name = 'promo_bot_cron_secret';
+  if sid is null then
+    perform vault.create_secret('SEU_CRON_SECRET', 'promo_bot_cron_secret', 'Bearer da rotina /api/cron/check');
+  else
+    perform vault.update_secret(sid, 'SEU_CRON_SECRET');
+  end if;
+end $$;
+
+-- '0 */3 * * *' = a cada 3 horas, no minuto 0 (UTC). Rodar de novo atualiza o job com o mesmo nome.
+-- Não precisa ser mais frequente que 1h: o bot lê páginas de lojas de verdade, e insistir aumenta a chance de bloqueio.
 select cron.schedule(
   'promo-bot-check',
   '0 */3 * * *',
@@ -15,7 +30,7 @@ select cron.schedule(
   select net.http_post(
     url := 'https://SEU-APP.vercel.app/api/cron/check',
     headers := jsonb_build_object(
-      'Authorization', 'Bearer SEU_CRON_SECRET',
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'promo_bot_cron_secret'),
       'Content-Type', 'application/json'
     ),
     body := '{}'::jsonb,
@@ -23,6 +38,11 @@ select cron.schedule(
   );
   $$
 );
+
+-- O Supabase libera o pg_net para as roles públicas ao habilitá-lo; o bot não precisa disso.
+revoke usage on schema net from anon, authenticated;
+revoke all on all tables in schema net from anon, authenticated;
+revoke execute on all functions in schema net from anon, authenticated;
 
 -- Ver as últimas execuções:
 --   select * from cron.job_run_details order by start_time desc limit 10;
