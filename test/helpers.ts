@@ -1,6 +1,10 @@
 // Bancos em memória usados pelos testes (mesma interface do Supabase).
 import type {
   AuthDb,
+  ChannelDb,
+  CouponRow,
+  StoredPost,
+  TgChannel,
   ChatSettings,
   CheckerDb,
   CommandDb,
@@ -28,12 +32,126 @@ export function memoryDb(initial: { watches?: Watch[]; sources?: Source[]; setti
     users: [] as User[],
     sessions: [] as SessionRow[],
     pruned: [] as string[],
+    channels: [] as TgChannel[],
+    posts: [] as StoredPost[],
+    matches: [] as { post_id: number; watch_id: number; price: number | null; notified_at: string | null }[],
+    coupons: [] as CouponRow[],
     seq: 100,
   };
   const settingsOf = (chatId: number): ChatSettings =>
-    state.settings.get(chatId) ?? { cep: initial.settings?.cep ?? null, freight_mode: initial.settings?.freight_mode ?? 'total' };
+    state.settings.get(chatId) ?? {
+      cep: initial.settings?.cep ?? null,
+      freight_mode: initial.settings?.freight_mode ?? 'total',
+      coupon_stores: initial.settings?.coupon_stores ?? ['amazon', 'shopee', 'mercadolivre'],
+    };
 
-  const db: CommandDb & CheckerDb & AuthDb & DashboardDb = {
+  const db: CommandDb & CheckerDb & AuthDb & DashboardDb & ChannelDb = {
+    // ----- canais e cupons -----
+    async listEnabledChannels() {
+      return state.channels
+        .filter((c) => c.enabled)
+        .sort((a, b) => (a.last_checked_at ?? '').localeCompare(b.last_checked_at ?? ''));
+    },
+    async updateChannel(id, patch) {
+      const c = state.channels.find((x) => x.id === id);
+      if (c) Object.assign(c, patch);
+    },
+    async insertPost(channelId, p) {
+      if (state.posts.some((x) => x.channel_id === channelId && x.message_id === p.messageId)) return null;
+      const row: StoredPost = {
+        id: ++state.seq,
+        channel_id: channelId,
+        message_id: p.messageId,
+        posted_at: p.postedAt,
+        title: p.title,
+        text: p.text,
+        price: p.price,
+        coupons: p.coupons.map((c) => c.code),
+        store: p.store,
+        offer_url: p.offerUrl,
+        post_url: p.postUrl,
+      };
+      state.posts.push(row);
+      return row.id;
+    },
+    async insertMatch(postId, watchId, price) {
+      if (state.matches.some((m) => m.post_id === postId && m.watch_id === watchId)) return false;
+      state.matches.push({ post_id: postId, watch_id: watchId, price, notified_at: null });
+      return true;
+    },
+    async markMatchNotified(postId, watchId, at) {
+      const m = state.matches.find((x) => x.post_id === postId && x.watch_id === watchId);
+      if (m) m.notified_at = at;
+    },
+    async getCoupon(chatId, store, code) {
+      return state.coupons.find((c) => c.chat_id === chatId && c.store === store && c.code === code) ?? null;
+    },
+    async upsertCoupon(c) {
+      const { seen_at, ...rest } = c;
+      const found = state.coupons.find((x) => x.chat_id === c.chat_id && x.store === c.store && x.code === c.code);
+      if (found) {
+        Object.assign(found, rest, { last_seen_at: seen_at });
+        return found;
+      }
+      const row: CouponRow = { id: ++state.seq, ...rest, first_seen_at: seen_at, last_seen_at: seen_at, notified_at: null };
+      state.coupons.push(row);
+      return row;
+    },
+    async markCouponNotified(id, at) {
+      const c = state.coupons.find((x) => x.id === id);
+      if (c) c.notified_at = at;
+    },
+    async prunePosts(before) {
+      const gone = new Set(state.posts.filter((p) => p.posted_at < before).map((p) => p.id));
+      state.posts = state.posts.filter((p) => !gone.has(p.id));
+      state.matches = state.matches.filter((m) => !gone.has(m.post_id));
+    },
+    async listChannels(chatId) {
+      return state.channels.filter((c) => c.chat_id === chatId);
+    },
+    async addChannel(chatId, c) {
+      const row: TgChannel = {
+        id: ++state.seq,
+        chat_id: chatId,
+        enabled: true,
+        last_message_id: null,
+        last_checked_at: null,
+        last_error: null,
+        ...c,
+      };
+      state.channels.push(row);
+      return row;
+    },
+    async setChannelEnabled(chatId, id, enabled) {
+      const c = state.channels.find((x) => x.id === id && x.chat_id === chatId);
+      if (!c) return null;
+      c.enabled = enabled;
+      return c;
+    },
+    async deleteChannel(chatId, id) {
+      const before = state.channels.length;
+      state.channels = state.channels.filter((x) => !(x.id === id && x.chat_id === chatId));
+      return state.channels.length < before;
+    },
+    async listCoupons(chatId, limit) {
+      return state.coupons
+        .filter((c) => c.chat_id === chatId)
+        .sort((a, b) => b.last_seen_at.localeCompare(a.last_seen_at))
+        .slice(0, limit);
+    },
+    async listWatchMatches(watchId) {
+      return state.matches
+        .filter((m) => m.watch_id === watchId)
+        .flatMap((m) => {
+          const post = state.posts.find((p) => p.id === m.post_id);
+          if (!post) return [];
+          const ch = state.channels.find((c) => c.id === post.channel_id);
+          return [{ ...m, post: { ...post, channel_title: ch?.title ?? '' } }];
+        });
+    },
+    async setCouponStores(chatId, stores) {
+      state.settings.set(chatId, { ...settingsOf(chatId), coupon_stores: stores });
+    },
     async lastPricePoints(offerIds, since) {
       const out = new Map<number, { offer_id: number; price: number; seen_at: string }>();
       for (const p of [...state.history].sort((a, b) => a.seen_at.localeCompare(b.seen_at))) {

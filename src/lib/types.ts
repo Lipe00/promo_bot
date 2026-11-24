@@ -176,6 +176,8 @@ export type FreightMode = 'total' | 'produto';
 export interface ChatSettings {
   cep: string | null;
   freight_mode: FreightMode;
+  /** Lojas cujos cupons novos são avisados no Telegram. */
+  coupon_stores?: string[];
 }
 
 /** Fonte de busca de um chat: liga/desliga uma loja embutida ou cadastra uma loja nova. */
@@ -199,7 +201,7 @@ export interface NewCustomSource {
 }
 
 /** O que os comandos do Telegram precisam do banco. */
-export interface CommandDb {
+export interface CommandDb extends ChannelAdminDb {
   addWatch(chatId: number, w: NewWatch): Promise<Watch>;
   listWatches(chatId: number): Promise<Watch[]>;
   updateWatch(chatId: number, id: number, patch: WatchPatch): Promise<Watch | null>;
@@ -281,4 +283,144 @@ export interface AuthDb {
 export interface DashboardDb {
   listOffersByWatches(watchIds: number[]): Promise<StoredOffer[]>;
   listHistory(watchId: number, since: string): Promise<PricePoint[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Canais do Telegram e cupons
+// ---------------------------------------------------------------------------
+
+export type ChannelSource = 'publico' | 'conta';
+
+export interface TgChannel {
+  id: number;
+  chat_id: number;
+  source: ChannelSource;
+  username: string | null;
+  tg_id: number | null;
+  access_hash: string | null;
+  peer_type: 'channel' | 'chat' | null;
+  title: string;
+  enabled: boolean;
+  last_message_id: number | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+}
+
+export interface NewTgChannel {
+  source: ChannelSource;
+  username: string | null;
+  tg_id: number | null;
+  access_hash: string | null;
+  peer_type: 'channel' | 'chat' | null;
+  title: string;
+  /** Já marcado como lido até aqui (canal público conferido na hora). */
+  last_message_id?: number | null;
+}
+
+/** Mensagem lida de um canal, antes de interpretar. */
+export interface RawPost {
+  messageId: number;
+  postedAt: string;
+  text: string;
+  /** Links de verdade (href), inclusive os escondidos atrás de texto. */
+  links: string[];
+  /** Link público do post, quando existe (t.me/canal/123). */
+  postUrl: string | null;
+}
+
+/** Post interpretado. */
+export interface ParsedPost extends RawPost {
+  title: string;
+  price: number | null;
+  regularPrice: number | null;
+  coupons: ParsedCoupon[];
+  store: string | null;
+  offerUrl: string | null;
+}
+
+export interface ParsedCoupon {
+  code: string;
+  /** "R$ 50 OFF", "10% OFF acima de R$ 300"… quando o post informa. */
+  discount: string | null;
+}
+
+export interface StoredPost {
+  id: number;
+  channel_id: number;
+  message_id: number;
+  posted_at: string;
+  title: string;
+  text: string;
+  price: number | null;
+  coupons: string[];
+  store: string | null;
+  offer_url: string | null;
+  post_url: string | null;
+}
+
+export interface CouponRow {
+  id: number;
+  chat_id: number;
+  store: string;
+  code: string;
+  description: string;
+  discount: string | null;
+  channel_title: string;
+  offer_url: string | null;
+  post_url: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  notified_at: string | null;
+}
+
+export interface UpsertCoupon {
+  chat_id: number;
+  store: string;
+  code: string;
+  description: string;
+  discount: string | null;
+  channel_title: string;
+  offer_url: string | null;
+  post_url: string | null;
+  seen_at: string;
+}
+
+/** Post que bateu com uma busca, para o detalhe da busca no painel. */
+export interface WatchPostMatch {
+  post_id: number;
+  watch_id: number;
+  price: number | null;
+  notified_at: string | null;
+  post: StoredPost & { channel_title: string };
+}
+
+/** O que a rotina de canais precisa do banco. */
+export interface ChannelDb {
+  listEnabledChannels(): Promise<TgChannel[]>;
+  updateChannel(id: number, patch: Partial<Pick<TgChannel, 'title' | 'username' | 'last_message_id' | 'last_checked_at' | 'last_error' | 'enabled'>>): Promise<void>;
+  /** Grava o post (único por canal + mensagem) e devolve o id; null se já existia. */
+  insertPost(channelId: number, p: ParsedPost): Promise<number | null>;
+  /** Registra que o post bateu com a busca; false se já estava registrado. */
+  insertMatch(postId: number, watchId: number, price: number | null): Promise<boolean>;
+  markMatchNotified(postId: number, watchId: number, at: string): Promise<void>;
+  getCoupon(chatId: number, store: string, code: string): Promise<CouponRow | null>;
+  upsertCoupon(c: UpsertCoupon): Promise<CouponRow>;
+  markCouponNotified(id: number, at: string): Promise<void>;
+  /** Apaga posts anteriores a esta data. */
+  prunePosts(before: string): Promise<void>;
+  listActiveWatches(chatId?: number): Promise<Watch[]>;
+  getSettings(chatId: number): Promise<ChatSettings>;
+  tryLock(name: string, ttlSeconds: number): Promise<boolean>;
+  unlock(name: string): Promise<void>;
+}
+
+/** O que o painel e os comandos precisam para canais e cupons. */
+export interface ChannelAdminDb {
+  listChannels(chatId: number): Promise<TgChannel[]>;
+  addChannel(chatId: number, c: NewTgChannel): Promise<TgChannel>;
+  setChannelEnabled(chatId: number, id: number, enabled: boolean): Promise<TgChannel | null>;
+  deleteChannel(chatId: number, id: number): Promise<boolean>;
+  listCoupons(chatId: number, limit: number): Promise<CouponRow[]>;
+  listWatchMatches(watchId: number): Promise<WatchPostMatch[]>;
+  setCouponStores(chatId: number, stores: string[]): Promise<void>;
 }

@@ -750,3 +750,202 @@ fieldset {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
+
+/* ---------- navegação ---------- */
+.mainnav {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.navlink {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.navlink[aria-current='page'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.small {
+  font-size: 12px;
+}
+
+.error-text {
+  color: var(--bad);
+}
+
+/* ---------- filtros (chips) ---------- */
+.chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 12px;
+  scrollbar-width: none;
+}
+
+.chip {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+/* ---------- cupons ---------- */
+.coupon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.coupon {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.coupon.stale {
+  opacity: 0.55;
+}
+
+.coupon-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.code {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 2px dashed var(--accent);
+  border-radius: 10px;
+  background: var(--surface-2);
+  cursor: pointer;
+  font: 700 18px/1 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  width: 100%;
+}
+
+.code span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.code small {
+  font: 600 12px/1 system-ui, sans-serif;
+  color: var(--accent);
+  letter-spacing: 0;
+  flex: none;
+}
+
+.coupon-discount {
+  font-weight: 600;
+  color: var(--good);
+}
+
+.coupon-desc {
+  font-size: 13px;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.settings {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.settings h3 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+/* ---------- canais ---------- */
+.addrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.addrow .input {
+  flex: 1 1 220px;
+}
+
+.channel-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.channel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.channel.paused {
+  opacity: 0.6;
+}
+
+.channel-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.channel-main strong {
+  word-break: break-word;
+}
+
+.channel-actions {
+  display: flex;
+  gap: 6px;
+}

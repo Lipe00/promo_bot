@@ -1,7 +1,62 @@
 import { BUILTIN_IDS, STORE_META, isBuiltinId } from './config.ts';
 import { formatBRL, isDeal, priceCeiling } from './price.ts';
 import type { AlertLevel, AlertReason } from './alerts.ts';
-import type { FreightMode, RawOffer, StoreResult, StoreStatusKind, StoreStatusRow, Watch } from './types.ts';
+import type { CouponRow, FreightMode, ParsedPost, RawOffer, StoreResult, StoreStatusKind, StoreStatusRow, Watch } from './types.ts';
+
+const COUPON_STORE_LABELS: Record<string, string> = {
+  mercadolivre: 'Mercado Livre',
+  amazon: 'Amazon',
+  shopee: 'Shopee',
+  kabum: 'KaBuM!',
+  aliexpress: 'AliExpress',
+  magalu: 'Magalu',
+  pichau: 'Pichau',
+  terabyte: 'TerabyteShop',
+  outra: 'outra loja',
+};
+
+function links(post: Pick<ParsedPost, 'offerUrl' | 'postUrl'>): string {
+  const parts: string[] = [];
+  if (post.offerUrl) parts.push(`🔗 <a href="${escapeAttr(post.offerUrl)}">Abrir oferta</a>`);
+  if (post.postUrl) parts.push(`<a href="${escapeAttr(post.postUrl)}">Ver post no canal</a>`);
+  return parts.join(' · ');
+}
+
+/** Post de canal que bateu com uma busca. */
+export function buildChannelMatchMessage(p: { post: ParsedPost; channelTitle: string; watch: Watch; price: number | null }): string {
+  const { post, watch } = p;
+  const lines = [`<b>📣 Visto no canal ${escapeHtml(p.channelTitle || 'sem nome')}</b>`, `<b>${escapeHtml(post.title || 'Oferta')}</b>`];
+  const bits: string[] = [];
+  bits.push(p.price !== null ? `💰 <b>${formatBRL(p.price)}</b>` : '💰 sem preço no post');
+  if (post.regularPrice && p.price !== null && post.regularPrice > p.price) bits.push(`de ${formatBRL(post.regularPrice)}`);
+  if (post.store) bits.push(`🏪 ${escapeHtml(COUPON_STORE_LABELS[post.store] ?? post.store)}`);
+  lines.push(bits.join(' · '));
+  for (const c of post.coupons) lines.push(`🎟️ Cupom <code>${escapeHtml(c.code)}</code>${c.discount ? ` · ${escapeHtml(c.discount)}` : ''}`);
+  const l = links(post);
+  if (l) lines.push(l);
+  lines.push(
+    `<i>Busca #${watch.id}: ${escapeHtml(watchLabel(watch))} (${watch.kind === 'categoria' ? 'teto' : 'alvo'} ${formatBRL(
+      watch.kind === 'categoria' ? priceCeiling(watch.target_price, watch.margin_pct) : watch.target_price,
+    )})</i>`,
+  );
+  return lines.join('\n');
+}
+
+/** Cupom novo visto num canal. */
+export function buildCouponMessage(p: { coupon: Pick<CouponRow, 'store' | 'code' | 'discount'>; post: ParsedPost; channelTitle: string }): string {
+  const { coupon, post } = p;
+  const store = COUPON_STORE_LABELS[coupon.store] ?? coupon.store;
+  const lines = [`<b>🎟️ Cupom ${escapeHtml(store)}: <code>${escapeHtml(coupon.code)}</code></b>`];
+  lines.push([coupon.discount ? escapeHtml(coupon.discount) : null, `visto em ${escapeHtml(p.channelTitle || 'canal')}`].filter(Boolean).join(' · '));
+  if (post.title) lines.push(`${escapeHtml(post.title.slice(0, 120))}${post.price !== null ? ` · ${formatBRL(post.price)}` : ''}`);
+  const l = links(post);
+  if (l) lines.push(l);
+  return lines.join('\n');
+}
+
+export function buildCouponOverflowMessage(n: number): string {
+  return `🎟️ +${n} cupom(ns) novo(s) nesta rodada. Veja todos na aba Cupons do painel.`;
+}
 
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

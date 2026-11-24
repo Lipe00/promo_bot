@@ -39,6 +39,23 @@ select cron.schedule(
   $$
 );
 
+-- Leitura dos canais do Telegram (posts que batem com as buscas e cupons): a cada 10 minutos.
+select cron.schedule(
+  'promo-bot-channels',
+  '*/10 * * * *',
+  $$
+  select net.http_post(
+    url := 'https://SEU-APP.vercel.app/api/cron/channels',
+    headers := jsonb_build_object(
+      'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'promo_bot_cron_secret'),
+      'Content-Type', 'application/json'
+    ),
+    body := '{}'::jsonb,
+    timeout_milliseconds := 10000
+  );
+  $$
+);
+
 -- O Supabase libera o pg_net para as roles públicas ao habilitá-lo; o bot não precisa disso.
 revoke usage on schema net from anon, authenticated;
 revoke all on all tables in schema net from anon, authenticated;

@@ -2,6 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // GramJS (userbot do Telegram) usa sockets e módulos opcionais do Node: roda sem empacotar.
+  serverExternalPackages: ['telegram'],
   async headers() {
     return [
       {

@@ -4,6 +4,34 @@
 import { createServer } from 'node:http';
 
 const messages = [];
+
+// Canais falsos no formato da prévia pública do Telegram (t.me/s/<canal>).
+// POST /__channel/<nome> { text, links } publica um post; DELETE /__channel/<nome> zera.
+const channels = new Map([['canalteste', { title: 'Canal de Teste', nextId: 501, posts: [] }]]);
+function seedChannel(ch) {
+  if (ch.posts.length === 0) {
+    for (const text of ['Bom dia! Ofertas do dia abaixo.', 'Notebook qualquer\n✅ R$ 3.000']) {
+      ch.posts.push({ id: ch.nextId++, text, links: [], date: new Date().toISOString() });
+    }
+  }
+}
+function esc(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function channelPage(name) {
+  const ch = channels.get(name);
+  if (!ch) return null;
+  seedChannel(ch);
+  const items = ch.posts
+    .slice(-20)
+    .map((p) => {
+      let html = esc(p.text).replace(/\n/g, '<br/>');
+      for (const l of p.links) html = html.replace(esc(l), `<a href="${esc(l)}" target="_blank">${esc(l)}</a>`);
+      return `<div class="tgme_widget_message_wrap js-widget_message_wrap"><div class="tgme_widget_message js-widget_message" data-post="${name}/${p.id}"><div class="tgme_widget_message_text js-message_text" dir="auto">${html}</div><div class="tgme_widget_message_footer"><a class="tgme_widget_message_date" href="https://t.me/${name}/${p.id}"><time datetime="${p.date}">agora</time></a></div></div></div>`;
+    })
+    .join('\n');
+  return `<!doctype html><html><body><div class="tgme_channel_info_header_title"><span dir="auto">${esc(ch.title)}</span></div><section class="tgme_channel_history">${items}</section></body></html>`;
+}
 let nextId = 1;
 
 const CATALOG = [
@@ -77,6 +105,33 @@ createServer(async (req, res) => {
   if (url.pathname === '/loja/busca') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     return res.end(storePage(url.searchParams.get('q') ?? ''));
+  }
+  const prev = url.pathname.match(/^\/s\/([A-Za-z0-9_]+)$/);
+  if (prev && req.method === 'GET') {
+    const html = channelPage(prev[1]);
+    if (!html) {
+      res.writeHead(302, { location: 'https://telegram.org/' });
+      return res.end();
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(html);
+  }
+  const admin = url.pathname.match(/^\/__channel\/([A-Za-z0-9_]+)$/);
+  if (admin) {
+    const name = admin[1];
+    if (req.method === 'DELETE') {
+      channels.set(name, { title: 'Canal de Teste', nextId: 501, posts: [] });
+      return json(200, { ok: true });
+    }
+    if (req.method === 'POST') {
+      const body = JSON.parse((await readBody(req)) || '{}');
+      const ch = channels.get(name) ?? { title: 'Canal de Teste', nextId: 501, posts: [] };
+      channels.set(name, ch);
+      seedChannel(ch);
+      const p = { id: ch.nextId++, text: body.text ?? '', links: body.links ?? [], date: new Date().toISOString() };
+      ch.posts.push(p);
+      return json(200, { ok: true, id: p.id });
+    }
   }
   if (url.pathname === '/health') return json(200, { ok: true });
   res.writeHead(404);

@@ -2,6 +2,7 @@ import { BUILTIN_IDS, DEFAULTS, STORE_META } from './config.ts';
 import { buildStatusMessage, escapeHtml, watchLabel } from './format.ts';
 import { formatBRL, parsePriceBRL, priceCeiling } from './price.ts';
 import { parseFreightMode } from './shipping.ts';
+import { storeLabel } from './channels/parse.ts';
 import { checkTemplate } from './stores/generic.ts';
 import { viaLabel } from './stores/index.ts';
 import type { CommandDb, StoreAdapter, Watch } from './types.ts';
@@ -10,7 +11,11 @@ import { buildNewWatch, parseMargin, parseStoreList, resolveStore } from './watc
 export interface CommandResult {
   reply: string;
   /** Trabalho demorado que a rota executa depois de responder. */
-  action?: { type: 'check' } | { type: 'test'; query: string } | { type: 'test-source'; sourceId: number; query: string };
+  action?:
+    | { type: 'check' }
+    | { type: 'test'; query: string }
+    | { type: 'test-source'; sourceId: number; query: string }
+    | { type: 'add-channel'; input: string };
 }
 
 export interface CommandCtx {
@@ -120,6 +125,11 @@ const HELP = [
   '/checar — roda a checagem agora',
   '/testar termo — mostra o que cada loja devolveu',
   '/status — saúde de cada loja',
+  '',
+  '<b>Canais do Telegram e cupons</b>',
+  '/canais — canais monitorados',
+  '/canal add @canal · /canal remover id (privados: pelo site)',
+  '/cupons — últimos cupons vistos',
 ].join('\n');
 
 function describeWatch(w: Watch): string {
@@ -360,6 +370,49 @@ export async function handleCommand(text: string, ctx: CommandCtx): Promise<Comm
         return (await db.deleteSource(chatId, id)) ? { reply: `🗑️ Fonte #${id} removida.` } : { reply: `Não achei a fonte #${id}.` };
       }
       return { reply: 'Use: /fonte add Nome | https://loja.com.br/busca?q={q}  ou  /fonte remover id' };
+    }
+
+    case 'canais': {
+      const list = await db.listChannels(chatId);
+      if (list.length === 0) {
+        return { reply: 'Nenhum canal monitorado. Use <code>/canal add @canal</code> (públicos) ou o site (privados e grupos).' };
+      }
+      const lines = ['<b>Canais monitorados</b>'];
+      for (const c of list) {
+        const icon = !c.enabled ? '⏸️' : c.last_error ? '⚠️' : '✅';
+        const name = escapeHtml(c.title || (c.username ? `@${c.username}` : `#${c.id}`));
+        const how = c.source === 'conta' ? 'pela conta' : 'público';
+        lines.push(`#${c.id} ${icon} ${name} · ${how}${c.last_error ? ` · ${escapeHtml(c.last_error.slice(0, 80))}` : ''}`);
+      }
+      lines.push('', '/canal add @canal · /canal remover id');
+      return { reply: lines.join('\n') };
+    }
+
+    case 'canal': {
+      const [sub, ...rest] = args.split(/\s+/);
+      const op = (sub ?? '').toLowerCase();
+      const value = rest.join(' ').trim();
+      if ((op === 'add' || op === 'adicionar') && value) {
+        return { reply: `🔎 Conferindo ${escapeHtml(value)}…`, action: { type: 'add-channel', input: value } };
+      }
+      if (op === 'remover' || op === 'apagar') {
+        const id = parseId(value);
+        if (id === null) return { reply: 'Use: /canal remover id (veja /canais)' };
+        return (await db.deleteChannel(chatId, id)) ? { reply: `🗑️ Canal #${id} removido.` } : { reply: `Não achei o canal #${id}.` };
+      }
+      return { reply: 'Use: /canal add @canal  ou  /canal remover id. Canais privados e grupos: pelo site, aba Canais.' };
+    }
+
+    case 'cupons': {
+      const list = await db.listCoupons(chatId, 10);
+      if (list.length === 0) return { reply: 'Nenhum cupom visto ainda. Eles aparecem quando os canais monitorados postam cupons.' };
+      const lines = ['<b>Últimos cupons</b>'];
+      for (const c of list) {
+        lines.push(
+          `🎟️ <code>${escapeHtml(c.code)}</code> · ${escapeHtml(storeLabel(c.store))}${c.discount ? ` · ${escapeHtml(c.discount)}` : ''}`,
+        );
+      }
+      return { reply: lines.join('\n') };
     }
 
     default:

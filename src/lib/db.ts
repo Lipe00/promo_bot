@@ -1,9 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 import type {
   AuthDb,
+  ChannelAdminDb,
+  ChannelDb,
   ChatSettings,
   CheckerDb,
   CommandDb,
+  CouponRow,
   DashboardDb,
   FreightMode,
   NewOffer,
@@ -11,15 +14,20 @@ import type {
   PricePoint,
   Source,
   StoredOffer,
+  StoredPost,
   StoreStatusRow,
+  TgChannel,
   User,
   Watch,
+  WatchPostMatch,
 } from './types.ts';
 
 export type Db = CommandDb &
   CheckerDb &
   AuthDb &
   DashboardDb &
+  ChannelDb &
+  ChannelAdminDb &
   Required<
     Pick<CheckerDb, 'getSettings' | 'listSources' | 'markChecked' | 'lastPricePoints' | 'insertPricePoints' | 'pruneHistory'>
   >;
@@ -59,16 +67,34 @@ function toPoint(row: Record<string, unknown>): PricePoint {
   return { ...(row as unknown as PricePoint), price: num(row.price) };
 }
 
+const nn = (v: unknown) => (v === null || v === undefined ? null : num(v));
+
+function toChannel(row: Record<string, unknown>): TgChannel {
+  return { ...(row as unknown as TgChannel), tg_id: nn(row.tg_id), last_message_id: nn(row.last_message_id) };
+}
+
+function toPost(row: Record<string, unknown>): StoredPost {
+  return { ...(row as unknown as StoredPost), message_id: num(row.message_id), price: nn(row.price) };
+}
+
 export function createDb(url: string, serviceRoleKey: string): Db {
   const sb = createClient(url, serviceRoleKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 
   const getSettings = async (chatId: number): Promise<ChatSettings> => {
-    const { data, error } = await sb.from('chat_settings').select('cep, freight_mode').eq('chat_id', chatId).maybeSingle();
+    const { data, error } = await sb
+      .from('chat_settings')
+      .select('cep, freight_mode, coupon_stores')
+      .eq('chat_id', chatId)
+      .maybeSingle();
     check('getSettings', error);
-    const row = data as { cep: string | null; freight_mode: FreightMode | null } | null;
-    return { cep: row?.cep ?? null, freight_mode: row?.freight_mode ?? 'total' };
+    const row = data as { cep: string | null; freight_mode: FreightMode | null; coupon_stores: string[] | null } | null;
+    return {
+      cep: row?.cep ?? null,
+      freight_mode: row?.freight_mode ?? 'total',
+      coupon_stores: row?.coupon_stores ?? ['amazon', 'shopee', 'mercadolivre'],
+    };
   };
 
   return {
@@ -320,6 +346,170 @@ export function createDb(url: string, serviceRoleKey: string): Db {
     async deleteUserSessions(userId) {
       const { error } = await sb.from('sessions').delete().eq('user_id', userId);
       check('deleteUserSessions', error);
+    },
+
+    // ----- canais e cupons -----
+    async listEnabledChannels() {
+      const { data, error } = await sb
+        .from('tg_channels')
+        .select('*')
+        .eq('enabled', true)
+        .order('last_checked_at', { ascending: true, nullsFirst: true });
+      check('listEnabledChannels', error);
+      return ((data ?? []) as Record<string, unknown>[]).map(toChannel);
+    },
+
+    async updateChannel(id, patch) {
+      const { error } = await sb.from('tg_channels').update(patch).eq('id', id);
+      check('updateChannel', error);
+    },
+
+    async insertPost(channelId, p) {
+      const { data, error } = await sb
+        .from('channel_posts')
+        .upsert(
+          {
+            channel_id: channelId,
+            message_id: p.messageId,
+            posted_at: p.postedAt,
+            text: p.text.slice(0, 4000),
+            title: p.title.slice(0, 300),
+            links: p.links.slice(0, 20),
+            price: p.price,
+            coupons: p.coupons.map((c) => c.code),
+            store: p.store,
+            offer_url: p.offerUrl,
+            post_url: p.postUrl,
+          },
+          { onConflict: 'channel_id,message_id', ignoreDuplicates: true },
+        )
+        .select('id');
+      check('insertPost', error);
+      const row = (data ?? [])[0] as { id: number } | undefined;
+      return row ? num(row.id) : null;
+    },
+
+    async insertMatch(postId, watchId, price) {
+      const { data, error } = await sb
+        .from('post_matches')
+        .upsert({ post_id: postId, watch_id: watchId, price }, { onConflict: 'post_id,watch_id', ignoreDuplicates: true })
+        .select('id');
+      check('insertMatch', error);
+      return (data ?? []).length > 0;
+    },
+
+    async markMatchNotified(postId, watchId, at) {
+      const { error } = await sb.from('post_matches').update({ notified_at: at }).eq('post_id', postId).eq('watch_id', watchId);
+      check('markMatchNotified', error);
+    },
+
+    async getCoupon(chatId, store, code) {
+      const { data, error } = await sb
+        .from('coupons')
+        .select('*')
+        .eq('chat_id', chatId)
+        .eq('store', store)
+        .eq('code', code)
+        .maybeSingle();
+      check('getCoupon', error);
+      return (data as CouponRow | null) ?? null;
+    },
+
+    async upsertCoupon(c) {
+      const { seen_at, ...rest } = c;
+      const { data, error } = await sb
+        .from('coupons')
+        .upsert({ ...rest, last_seen_at: seen_at }, { onConflict: 'chat_id,store,code' })
+        .select()
+        .single();
+      check('upsertCoupon', error);
+      return data as CouponRow;
+    },
+
+    async markCouponNotified(id, at) {
+      const { error } = await sb.from('coupons').update({ notified_at: at }).eq('id', id);
+      check('markCouponNotified', error);
+    },
+
+    async prunePosts(before) {
+      const { error } = await sb.from('channel_posts').delete().lt('posted_at', before);
+      check('prunePosts', error);
+    },
+
+    async listChannels(chatId) {
+      const { data, error } = await sb.from('tg_channels').select('*').eq('chat_id', chatId).order('id');
+      check('listChannels', error);
+      return ((data ?? []) as Record<string, unknown>[]).map(toChannel);
+    },
+
+    async addChannel(chatId, c) {
+      const { data, error } = await sb
+        .from('tg_channels')
+        .insert({ chat_id: chatId, ...c })
+        .select()
+        .single();
+      check('addChannel', error);
+      return toChannel(data as Record<string, unknown>);
+    },
+
+    async setChannelEnabled(chatId, id, enabled) {
+      const { data, error } = await sb
+        .from('tg_channels')
+        .update({ enabled })
+        .eq('id', id)
+        .eq('chat_id', chatId)
+        .select()
+        .maybeSingle();
+      check('setChannelEnabled', error);
+      return data ? toChannel(data as Record<string, unknown>) : null;
+    },
+
+    async deleteChannel(chatId, id) {
+      const { data, error } = await sb.from('tg_channels').delete().eq('id', id).eq('chat_id', chatId).select('id');
+      check('deleteChannel', error);
+      return (data ?? []).length > 0;
+    },
+
+    async listCoupons(chatId, limit) {
+      const { data, error } = await sb
+        .from('coupons')
+        .select('*')
+        .eq('chat_id', chatId)
+        .order('last_seen_at', { ascending: false })
+        .limit(limit);
+      check('listCoupons', error);
+      return (data ?? []) as CouponRow[];
+    },
+
+    async listWatchMatches(watchId) {
+      const { data, error } = await sb
+        .from('post_matches')
+        .select('post_id, watch_id, price, notified_at, post:channel_posts(*, channel:tg_channels(title))')
+        .eq('watch_id', watchId)
+        .order('created_at', { ascending: false })
+        .limit(50);
+      check('listWatchMatches', error);
+      return ((data ?? []) as Record<string, unknown>[]).flatMap((r) => {
+        const post = r.post as (Record<string, unknown> & { channel?: { title?: string } | null }) | null;
+        if (!post) return [];
+        const { channel, ...rest } = post;
+        return [
+          {
+            post_id: num(r.post_id),
+            watch_id: num(r.watch_id),
+            price: nn(r.price),
+            notified_at: (r.notified_at as string | null) ?? null,
+            post: { ...toPost(rest), channel_title: channel?.title ?? '' },
+          } satisfies WatchPostMatch,
+        ];
+      });
+    },
+
+    async setCouponStores(chatId, stores) {
+      const { error } = await sb
+        .from('chat_settings')
+        .upsert({ chat_id: chatId, coupon_stores: stores, updated_at: new Date().toISOString() }, { onConflict: 'chat_id' });
+      check('setCouponStores', error);
     },
 
     async tryLock(name, ttlSeconds) {

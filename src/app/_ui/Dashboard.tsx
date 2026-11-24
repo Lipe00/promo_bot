@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { StoreOption, WatchCard } from '../../lib/dashboard.ts';
 import { STATUS_LABEL, ago, money } from './fmt.ts';
 import { Panel } from './Panel.tsx';
+import { Shell } from './Shell.tsx';
 import { WatchDetailView } from './WatchDetail.tsx';
 import { WatchForm } from './WatchForm.tsx';
 
@@ -79,35 +80,26 @@ export function Dashboard(props: { username: string; initialCards: WatchCard[]; 
     setNotice({ text: 'Checagem concluída.' });
   }
 
-  async function logout() {
-    await fetch('/api/ui/logout', { method: 'POST' }).catch(() => null);
-    window.location.replace('/login');
-  }
-
   const active = cards.filter((c) => c.active);
   const hot = active.filter((c) => c.status === 'abaixo').length;
   const lastCheck = cards.map((c) => c.lastCheckedAt).filter(Boolean).sort().at(-1) ?? null;
   const selected = open?.kind === 'detail' ? cards.find((c) => c.id === open.id) : undefined;
 
   return (
-    <>
-      <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            Promo Bot<small className="only-wide">{props.username}</small>
-          </div>
+    <Shell
+      username={props.username}
+      active="buscas"
+      actions={
+        <>
           <button className="btn btn-primary" onClick={() => show({ kind: 'new' })}>
             + <span className="only-wide">Produto</span>
           </button>
           <button className="btn" onClick={checkNow} disabled={checking} title="Checar agora">
             {checking ? '…' : '↻'} <span className="only-wide">Checar agora</span>
           </button>
-          <button className="btn" onClick={logout} title="Sair">
-            Sair
-          </button>
-        </div>
-      </header>
-
+        </>
+      }
+    >
       <main className="wrap">
         <div className="summary">
           <span>{active.length} busca(s) ativa(s)</span>
@@ -183,6 +175,6 @@ export function Dashboard(props: { username: string; initialCards: WatchCard[]; 
           />
         </Panel>
       )}
-    </>
+    </Shell>
   );
 }

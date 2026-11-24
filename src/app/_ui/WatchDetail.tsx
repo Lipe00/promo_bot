@@ -6,7 +6,7 @@ import type { HistoryPoint, StoreOption, WatchDetail } from '../../lib/dashboard
 import { STATUS_LABEL, ago, dateTime, money } from './fmt.ts';
 import { PriceChart } from './PriceChart.tsx';
 
-type Tab = 'ofertas' | 'historico' | 'config';
+type Tab = 'ofertas' | 'canais' | 'historico' | 'config';
 
 export function WatchDetailView(props: {
   id: number;
@@ -61,6 +61,7 @@ export function WatchDetailView(props: {
         {(
           [
             ['ofertas', `Ofertas (${data.offers.length})`],
+            ['canais', `Canais (${data.channelPosts.length})`],
             ['historico', 'Histórico'],
             ['config', 'Configurar'],
           ] as [Tab, string][]
@@ -72,6 +73,7 @@ export function WatchDetailView(props: {
       </div>
 
       {tab === 'ofertas' && <Offers data={data} />}
+      {tab === 'canais' && <ChannelPosts data={data} />}
       {tab === 'historico' && <History data={data} />}
       {tab === 'config' && (
         <Config
@@ -85,6 +87,48 @@ export function WatchDetailView(props: {
         />
       )}
     </>
+  );
+}
+
+function ChannelPosts({ data }: { data: WatchDetail }) {
+  if (data.channelPosts.length === 0) {
+    return (
+      <p className="muted">
+        Nenhum post de canal bateu com esta busca nas últimas 48h. Cadastre canais na aba <a href="/canais">Canais</a>.
+      </p>
+    );
+  }
+  return (
+    <div>
+      {data.channelPosts.map((p) => (
+        <div key={p.postId} className="offer">
+          <div className="offer-top">
+            <strong>{p.channelTitle || 'canal'}</strong>
+            <span className="offer-price">{p.price !== null ? money(p.price) : 'sem preço'}</span>
+          </div>
+          <div className="offer-title">{p.title}</div>
+          <div className="offer-meta">
+            {p.store && <span>🏪 {p.storeName}</span>}
+            {p.coupons.map((c) => (
+              <span key={c} className="badge deal">
+                🎟️ {c}
+              </span>
+            ))}
+            <span>{dateTime(p.postedAt)}</span>
+            {p.postUrl && (
+              <a href={p.postUrl} target="_blank" rel="noopener noreferrer">
+                post ↗
+              </a>
+            )}
+            {p.offerUrl && (
+              <a href={p.offerUrl} target="_blank" rel="noopener noreferrer">
+                oferta ↗
+              </a>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 

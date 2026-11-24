@@ -6,6 +6,12 @@ import { makeFetchHtml } from './http.ts';
 import { STORE_ADAPTERS, buildAdapters } from './stores/index.ts';
 import { sendTelegram } from './telegram.ts';
 import type { StoreAdapter } from './types.ts';
+import { runChannels } from './channels/monitor.ts';
+import type { ChannelSummary } from './channels/monitor.ts';
+import { makePreviewReader } from './channels/preview.ts';
+import type { ChannelReader } from './channels/reader.ts';
+import { connectUserbot, makeUserbotReader, userbotConfigFromEnv } from './channels/userbot.ts';
+import type { UserbotApi } from './channels/userbot.ts';
 
 export function requireEnv(name: string): string {
   const value = process.env[name];
@@ -73,5 +79,49 @@ export async function runLocked(chatId?: number): Promise<CheckSummary | { skipp
     return await runChecks(rt.deps, chatId === undefined ? {} : { chatId });
   } finally {
     await rt.db.unlock(LOCK_NAME).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Canais do Telegram
+// ---------------------------------------------------------------------------
+
+/** Leitor que só devolve um erro (ex.: a conta do Telegram não conectou). */
+function failingReader(error: string): ChannelReader {
+  return { read: async () => ({ error, posts: [], latestId: null }) };
+}
+
+/** Abre a conta do Telegram (userbot) se estiver configurada. */
+export async function openUserbot(): Promise<{ api: UserbotApi | null; error: string | null }> {
+  const cfg = userbotConfigFromEnv();
+  if (!cfg) return { api: null, error: 'conta do Telegram não conectada (TELEGRAM_API_ID, TELEGRAM_API_HASH e TELEGRAM_USER_SESSION)' };
+  try {
+    return { api: await connectUserbot(cfg), error: null };
+  } catch (e) {
+    return { api: null, error: `não consegui conectar na conta do Telegram: ${e instanceof Error ? e.message.slice(0, 160) : 'erro'}` };
+  }
+}
+
+/** Roda a leitura dos canais com trava própria (não disputa com a checagem das lojas). */
+export async function runChannelsLocked(): Promise<ChannelSummary | { skipped: string }> {
+  const rt = getRuntime();
+  if (!(await rt.db.tryLock('channels', 120))) return { skipped: 'Já existe uma leitura de canais em andamento.' };
+  let api: UserbotApi | null = null;
+  try {
+    const needsAccount = (await rt.db.listEnabledChannels()).some((c) => c.source === 'conta');
+    let conta: ChannelReader | null = null;
+    if (needsAccount) {
+      const opened = await openUserbot();
+      api = opened.api;
+      conta = api ? makeUserbotReader(api) : failingReader(opened.error ?? 'conta do Telegram indisponível');
+    }
+    return await runChannels({
+      db: rt.db,
+      readers: { publico: makePreviewReader(rt.deps.env), conta },
+      notify: rt.deps.notify,
+    });
+  } finally {
+    await api?.close().catch(() => {});
+    await rt.db.unlock('channels').catch(() => {});
   }
 }

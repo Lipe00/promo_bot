@@ -1,5 +1,6 @@
 import { BUILTIN_IDS, STORE_META } from './config.ts';
 import { storeName, watchLabel } from './format.ts';
+import { storeLabel } from './channels/parse.ts';
 import { priceCeiling } from './price.ts';
 import type { CommandDb, DashboardDb, Source, StoredOffer, Watch } from './types.ts';
 
@@ -74,6 +75,8 @@ export interface WatchDetail {
   stores: string[] | null;
   offers: OfferView[];
   history: { daily: DailyPoint[]; points: HistoryPoint[] };
+  /** Posts de canais do Telegram que bateram com a busca (últimas 48h). */
+  channelPosts: ChannelPostView[];
 }
 
 export interface StoreOption {
@@ -196,6 +199,19 @@ export async function buildDetail(
       current: isCurrent(o, w),
     })),
     history: { daily: dailyMin(points), points },
+    channelPosts: (await db.listWatchMatches(w.id)).map((m) => ({
+      postId: m.post_id,
+      title: m.post.title,
+      price: m.price,
+      coupons: m.post.coupons ?? [],
+      store: m.post.store,
+      storeName: storeLabel(m.post.store),
+      offerUrl: m.post.offer_url,
+      postUrl: m.post.post_url,
+      channelTitle: m.post.channel_title,
+      postedAt: m.post.posted_at,
+      notified: !!m.notified_at,
+    })),
   };
 }
 
@@ -207,4 +223,18 @@ export async function storeOptions(db: CommandDb, chatId: number): Promise<Store
     ...BUILTIN_IDS.map((id) => ({ id, name: STORE_META[id].name, enabled: !disabled.has(id) })),
     ...sources.filter((s) => s.kind === 'custom').map((s) => ({ id: `custom:${s.id}`, name: s.name, enabled: s.enabled })),
   ];
+}
+
+export interface ChannelPostView {
+  postId: number;
+  title: string;
+  price: number | null;
+  coupons: string[];
+  store: string | null;
+  storeName: string;
+  offerUrl: string | null;
+  postUrl: string | null;
+  channelTitle: string;
+  postedAt: string;
+  notified: boolean;
 }

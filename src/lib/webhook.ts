@@ -1,5 +1,6 @@
 import { testStores } from './checker.ts';
 import type { CheckSummary } from './checker.ts';
+import { addPublicChannel } from './channels/admin.ts';
 import { handleCommand } from './commands.ts';
 import { buildSummaryMessage, buildTestMessage, escapeHtml } from './format.ts';
 import { searchTerms } from './matching.ts';
@@ -77,6 +78,14 @@ export async function handleUpdate(update: TelegramUpdate | null, deps: WebhookD
           const cep = await db.getCep(chatId);
           const results = await testStores(await deps.adaptersFor(chatId), deps.env, terms, { cep });
           await deps.send(chatId, buildTestMessage(action.query, results));
+        } else if (action.type === 'add-channel') {
+          const r = await addPublicChannel(db, chatId, action.input, deps.env);
+          await deps.send(
+            chatId,
+            r.ok
+              ? `📣 Canal #${r.channel.id} adicionado: <b>${escapeHtml(r.channel.title)}</b>. Começo a ler as mensagens novas a partir de agora.`
+              : `❌ ${escapeHtml(r.error)}`,
+          );
         } else if (action.type === 'test-source') {
           const src = (await db.listSources(chatId)).find((s) => s.id === action.sourceId);
           if (!src) return;

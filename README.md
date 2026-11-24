@@ -48,7 +48,7 @@ Cadastre na Vercel em **Settings → Environment Variables** (nunca pelo Telegra
 ### 2. Supabase
 1. Crie um projeto em supabase.com (região São Paulo).
 2. **SQL Editor → New query**: cole `supabase/schema.sql` e rode.
-   - **Já tinha rodado uma versão antiga?** Rode as migrações de `supabase/migrations/` que faltam, em ordem (002, 003, 004). Todas podem rodar mais de uma vez.
+   - **Já tinha rodado uma versão antiga?** Rode as migrações de `supabase/migrations/` que faltam, em ordem (002 a 005). Todas podem rodar mais de uma vez.
 3. **Project Settings → API Keys**: copie a **Project URL** e a **Secret key** (`sb_secret_...`, a substituta da antiga `service_role`; só no servidor). Não use a *publishable key*.
 
 ### 3. Vercel
@@ -70,7 +70,7 @@ Cadastre na Vercel em **Settings → Environment Variables** (nunca pelo Telegra
 > Se você testou o bot no Docker local (modo `real`), o webhook foi apagado. É só rodar o comando do passo 4.1 de novo.
 
 ### 5. Agendamento
-No Supabase, **SQL Editor**, abra `supabase/cron.sql`, troque `SEU-APP` e `SEU_CRON_SECRET` e rode.
+No Supabase, **SQL Editor**, abra `supabase/cron.sql`, troque `SEU-APP` e `SEU_CRON_SECRET` e rode. Ele cria dois jobs: a checagem das lojas (a cada 3h) e a leitura dos canais do Telegram (a cada 10 min).
 O segredo fica guardado no **Vault** do Supabase (criptografado), não no texto do job. Para trocar o `CRON_SECRET`, mude na Vercel e rode o `cron.sql` de novo com o valor novo.
 Por padrão roda **a cada 3 horas**. O cron grátis da Vercel só roda 1x por dia, por isso o agendamento fica no `pg_cron` do Supabase.
 
@@ -100,6 +100,30 @@ Abra `https://SEU-APP.vercel.app` e entre com o usuário do painel. Funciona no 
   ```
   A tabela `users` já aceita várias contas, cada uma ligada a um chat do Telegram.
 
+## Canais do Telegram e cupons
+
+O bot lê canais e grupos de promoção **a cada 10 minutos** e:
+- **avisa os posts que batem com suas buscas** (mesmas regras: palavras, alvo + margem, "apenas promoções"; post sem preço legível avisa marcando "sem preço");
+- **captura os cupons** (`Cupom: XYZ`, `código`, `use o cupom`…), com desconto e mínimo quando o post informa, e a loja pelo link (`meli.la`, `amzn.to`, `link.amazon`, `s.shopee.com.br`…). Encurtadores desconhecidos são seguidos para descobrir a loja;
+- **avisa cupons novos na hora, um por um**, das lojas marcadas na aba Cupons (padrão: Amazon, Shopee e Mercado Livre). O mesmo cupom não é avisado de novo; volta a ser avisado se sumir por mais de 7 dias. Há um limite de 10 avisos de cupom por rodada; o excedente vira uma mensagem "+N cupons".
+
+Os posts ficam guardados por **48 horas**. Os cupons guardam o próprio resumo e continuam na aba Cupons.
+
+> Por que não pegar cupons direto nas lojas? Testado em 24/11/2026: a página de cupons do Mercado Livre exige login, a da Amazon é montada por JavaScript sem os dados no HTML, e a Shopee também exige login. Os canais publicam os cupons junto com as ofertas.
+
+**Canais públicos** (têm @): na aba **Canais** do site, `+ Público` com `@canal` ou o link `t.me/canal`, ou pelo Telegram `/canal add @canal`. Sem login: o bot lê a página pública `t.me/s/canal`.
+
+**Canais privados e grupos**: precisam da **sua conta do Telegram** conectada ("userbot", só leitura; os avisos continuam saindo pelo bot):
+1. Em **my.telegram.org** → *API development tools*, crie um app e coloque `TELEGRAM_API_ID` e `TELEGRAM_API_HASH` no `.env.deploy.local`.
+2. No seu terminal, rode o login e digite o número, o código que chegar no Telegram e a senha de 2 etapas, se tiver:
+   ```powershell
+   docker run --rm -it -v "${PWD}:/app" -v promobot_nm:/app/node_modules -w /app --env-file .env.deploy.local node:22-bookworm-slim node --experimental-strip-types --no-warnings scripts/telegram-login.ts
+   ```
+   O script grava `TELEGRAM_USER_SESSION` no `.env.deploy.local`. Cadastre as três variáveis na Vercel como *Sensitive* e faça redeploy.
+3. Na aba **Canais**, `+ Da minha conta` lista os canais e grupos em que você está; marque os que quer monitorar.
+
+⚠️ A `TELEGRAM_USER_SESSION` equivale a estar logado na sua conta: guarde só no `.env.deploy.local` e na Vercel. Para desconectar: Telegram → Configurações → Dispositivos → encerrar "promo-bot". O bot só lê (no máximo 50 mensagens por canal a cada 10 min) e respeita o `FLOOD_WAIT` do Telegram.
+
 ## Uso no Telegram
 
 | Comando | O que faz |
@@ -113,6 +137,8 @@ Abra `https://SEU-APP.vercel.app` e entre com o usuário do painel. Funciona no 
 | `/preco 1 280` · `/margem 1 10` | muda alvo ou margem da busca #1 |
 | `/pausar 1` · `/ativar 1` · `/remover 1` | gerencia |
 | `/promo 1` | liga/desliga "apenas promoções" na busca #1 |
+| `/canais` · `/canal add @canal` · `/canal remover 2` | canais do Telegram monitorados (privados e grupos: pelo site) |
+| `/cupons` | últimos cupons vistos nos canais |
 | `/lojas` · `/lojas off amazon` · `/lojas on amazon` | lojas e como cada uma é lida; liga/desliga |
 | `/fonte add Nome \| https://loja.com.br/busca?q={q}` | cadastra loja nova (testa na hora) |
 | `/fonte remover 3` | remove a fonte #3 |
@@ -152,7 +178,7 @@ docker compose -f docker/compose.yml --profile mock up -d
 docker compose -f docker/compose.yml --profile e2e run --rm e2e
 ```
 
-- `npm test`: 134 testes de unidade (lógica, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
+- `npm test`: 154 testes de unidade (lógica, canais e cupons, comandos, checagem, frete, categorias, fontes, APIs com respostas gravadas, leitores das lojas contra **páginas reais reduzidas** em `test/fixtures/`).
 - E2E (`test/e2e/`): sobe Postgres + PostgREST (imitando o Supabase), um Telegram falso e uma loja falsa; manda comandos pelo webhook e confere banco e mensagens.
 - `npm run test:live`: busca **real** em todas as lojas e imprime o que achou. Use `LIVE_TERM="rtx 4060"` para trocar o termo.
 
@@ -200,6 +226,9 @@ src/lib/dashboard.ts                cards, detalhe e histórico do painel
 src/lib/watch-input.ts              regras de cadastro (Telegram e painel)
 src/app/page.tsx · login/ · _ui/    painel web
 src/app/api/ui/                     API do painel
+src/lib/channels/                   canais do Telegram: parse (cupons, preço, loja), preview (t.me/s), userbot, monitor
+src/app/api/cron/channels/          leitura dos canais (pg_cron a cada 10 min)
+src/app/cupons · canais/            páginas Cupons e Canais
 src/lib/checker.ts                  busca, margem, frete, categorias, orçamento de tempo, alertas
 src/lib/alerts.ts                   regra de quando avisar
 src/lib/matching.ts                 palavras da busca × título

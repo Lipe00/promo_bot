@@ -206,3 +206,16 @@ test('/promo liga e desliga "apenas promoções"; /lista mostra o selo', async (
   assert.equal(state.watches[0]?.only_deals, false);
   assert.match((await handleCommand('/promo 99', ctx)).reply, /Não achei/);
 });
+
+test('/canais, /canal add (vira ação), /canal remover e /cupons', async () => {
+  const { ctx, db } = setup();
+  assert.match((await handleCommand('/canais', ctx)).reply, /Nenhum canal/);
+  assert.deepEqual((await handleCommand('/canal add @promobit', ctx)).action, { type: 'add-channel', input: '@promobit' });
+  const ch = await db.addChannel(7, { source: 'publico', username: 'promobit', tg_id: null, access_hash: null, peer_type: 'channel', title: 'Ofertas PC' });
+  assert.match((await handleCommand('/canais', ctx)).reply, new RegExp(`#${ch.id} ⏳?.*Ofertas PC|#${ch.id} ✅ Ofertas PC`));
+  assert.match((await handleCommand(`/canal remover ${ch.id}`, ctx)).reply, /removido/);
+  assert.match((await handleCommand('/canal', ctx)).reply, /Use: \/canal add/);
+  assert.match((await handleCommand('/cupons', ctx)).reply, /Nenhum cupom/);
+  await db.upsertCoupon({ chat_id: 7, store: 'mercadolivre', code: 'MELI10', description: 'x', discount: '10% OFF', channel_title: 'c', offer_url: null, post_url: null, seen_at: '2026-11-24T00:00:00Z' });
+  assert.match((await handleCommand('/cupons', ctx)).reply, /<code>MELI10<\/code> · Mercado Livre · 10% OFF/);
+});

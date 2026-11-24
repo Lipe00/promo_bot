@@ -28,6 +28,7 @@ services:
       - ./init/03-grants.sql:/docker-entrypoint-initdb.d/03-grants.sql:ro
       - ../supabase/migrations/003_seguranca.sql:/docker-entrypoint-initdb.d/04-migration-003.sql:ro
       - ../supabase/migrations/004_painel.sql:/docker-entrypoint-initdb.d/05-migration-004.sql:ro
+      - ../supabase/migrations/005_canais_cupons.sql:/docker-entrypoint-initdb.d/06-migration-005.sql:ro
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U postgres']
@@ -82,6 +83,7 @@ services:
       TELEGRAM_ALLOWED_CHAT_ID: '4242'
       CRON_SECRET: e2e-cron-secret
       PROMO_DEV_HTTP_HOSTS: mocks
+      TELEGRAM_PREVIEW_BASE: http://mocks:4000
       PASSWORD_SALT: 0000000000000000000000000000000000000000000000000000000000dev0salt
       SESSION_SECRET: 1111111111111111111111111111111111111111111111111111111dev0session
       NEXT_TELEMETRY_DISABLED: '1'
